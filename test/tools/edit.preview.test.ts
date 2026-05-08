@@ -46,7 +46,7 @@ describe("computeEditPreview", () => {
       const preview = await computeEditPreview(
         {
           path: "sample.txt",
-          oldText: 'he said “hi”',
+          oldText: 'he said "hi"',
           newText: "HELLO",
         },
         cwd,
