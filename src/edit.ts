@@ -1,7 +1,7 @@
-import { StringEnum } from "@mariozechner/pi-ai";
-import { Markdown, Text } from "@mariozechner/pi-tui";
-import type { ExtensionAPI, ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { withFileMutationQueue } from "@mariozechner/pi-coding-agent";
+import { StringEnum } from "@earendil-works/pi-ai";
+import { Markdown, Text } from "@earendil-works/pi-tui";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { constants } from "fs";
 import { readFileSync } from "fs";
@@ -78,10 +78,10 @@ export const hashlineEditToolSchema = Type.Object(
     edits: Type.Optional(
       Type.Array(hashlineEditItemSchema, { description: "edits over $path" }),
     ),
-    oldText: Type.Optional(Type.String({ description: "Deprecated legacy compatibility field. Prefer edits[].oldText with op replace_text." })),
-    newText: Type.Optional(Type.String({ description: "Deprecated legacy compatibility field. Prefer edits[].newText with op replace_text." })),
-    old_text: Type.Optional(Type.String({ description: "Deprecated legacy compatibility field. Prefer oldText or edits[].oldText." })),
-    new_text: Type.Optional(Type.String({ description: "Deprecated legacy compatibility field. Prefer newText or edits[].newText." })),
+    oldText: Type.Optional(Type.String({ description: "Deprecated. Use edits[].oldText with op replace_text." })),
+    newText: Type.Optional(Type.String({ description: "Deprecated. Use edits[].newText with op replace_text." })),
+    old_text: Type.Optional(Type.String({ description: "Deprecated. Use oldText or edits[].oldText." })),
+    new_text: Type.Optional(Type.String({ description: "Deprecated. Use newText or edits[].newText." })),
   },
   { additionalProperties: false },
 );
@@ -198,6 +198,7 @@ function getVisibleLines(text: string): string[] {
   const lines = text.split("\n");
   return text.endsWith("\n") ? lines.slice(0, -1) : lines;
 }
+
 
 // Intentional overlap with the published TypeBox schema:
 // - pi normally runs AJV validation before execute(), but that can be disabled in

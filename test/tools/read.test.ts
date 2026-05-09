@@ -1,10 +1,16 @@
-import { execFile } from "child_process";
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import register from "../../index";
 import { formatHashlineRegion } from "../../src/hashline";
 import { formatHashlineReadPreview } from "../../src/read";
 import { computeLineHash } from "../../src/hashline";
 import { makeFakePiRegistry, withTempFile } from "../support/fixtures";
+
+vi.mock("../../src/file-kind", () => ({
+  loadFileKindAndText: vi.fn(),
+  classifyFileKind: vi.fn(),
+}));
+
+import * as fileKindMod from "../../src/file-kind";
 
 describe("formatHashlineReadPreview", () => {
   it("refuses to emit a truncated hashline for an oversized first line", () => {
@@ -12,9 +18,9 @@ describe("formatHashlineReadPreview", () => {
     const result = formatHashlineReadPreview(longLine, { offset: 1 });
 
     expect(result.text).toContain("Hashline output requires full lines");
-    expect(result.truncation?.truncated).toBeTrue();
+    expect(result.truncation?.truncated).toBe(true);
     expect(result.truncation?.truncatedBy).toBe("bytes");
-    expect(result.truncation?.firstLineExceedsLimit).toBeTrue();
+    expect(result.truncation?.firstLineExceedsLimit).toBe(true);
   });
 
   it("formats ordinary lines as full hashlines", () => {
@@ -96,8 +102,15 @@ describe("formatHashlineRegion", () => {
 });
 
 describe("read tool protocol", () => {
+  beforeEach(() => {
+    vi.mocked(fileKindMod.loadFileKindAndText).mockReset();
+    vi.mocked(fileKindMod.classifyFileKind).mockReset();
+  });
+
   it("returns the empty-file advisory through the registered tool", async () => {
     await withTempFile("empty.txt", "", async ({ cwd }) => {
+      vi.mocked(fileKindMod.loadFileKindAndText).mockResolvedValue({ kind: "text", text: "" });
+
       const { pi, getTool } = makeFakePiRegistry();
       register(pi);
       const readTool = getTool("read");
@@ -118,6 +131,8 @@ describe("read tool protocol", () => {
 
   it("omits the trailing newline sentinel through the registered tool", async () => {
     await withTempFile("sample.txt", "alpha\nbeta\n", async ({ cwd }) => {
+      vi.mocked(fileKindMod.loadFileKindAndText).mockResolvedValue({ kind: "text", text: "alpha\nbeta\n" });
+
       const { pi, getTool } = makeFakePiRegistry();
       register(pi);
       const readTool = getTool("read");
@@ -137,65 +152,27 @@ describe("read tool protocol", () => {
   });
 
   it("uses the shared text loader instead of classifying then re-reading text files", async () => {
-    const fileKindModulePath = new URL("../../src/file-kind.ts", import.meta.url).href;
-    const indexModulePath = new URL("../../index.ts", import.meta.url).href;
-
     await withTempFile("sample.txt", "ignored\n", async ({ cwd }) => {
-      const script = `
-import { mock } from "bun:test";
+      vi.mocked(fileKindMod.loadFileKindAndText).mockResolvedValue({ kind: "text", text: "alpha\nbeta\n" });
+      vi.mocked(fileKindMod.classifyFileKind).mockRejectedValue(
+        new Error("read tool should not call classifyFileKind on text paths"),
+      );
 
-const fileKindModulePath = ${JSON.stringify(fileKindModulePath)};
-const indexModulePath = ${JSON.stringify(indexModulePath)};
-const cwd = ${JSON.stringify(cwd)};
+      const { pi, getTool } = makeFakePiRegistry();
+      register(pi);
+      const readTool = getTool("read");
 
-mock.module(fileKindModulePath, () => ({
-  async loadFileKindAndText() {
-    return { kind: "text", text: "alpha\\nbeta\\n" };
-  },
-  async classifyFileKind() {
-    throw new Error("read tool should not call classifyFileKind on text paths");
-  },
-}));
+      const result = await readTool.execute(
+        "r1",
+        { path: "sample.txt" },
+        undefined,
+        undefined,
+        { cwd } as any,
+      );
 
-try {
-  const { default: registerReadTool } = await import(\`${indexModulePath}?read-single-pass=\${Date.now()}\`);
-  const tools = new Map();
-  const pi = {
-    registerTool(tool) {
-      tools.set(tool.name, tool);
-    },
-    on() {},
-  };
-  registerReadTool(pi);
-  const readTool = tools.get("read");
-  if (!readTool) {
-    throw new Error("Tool not registered: read");
-  }
-  const result = await readTool.execute(
-    "r1",
-    { path: "sample.txt" },
-    undefined,
-    undefined,
-    { cwd },
-  );
-  console.log(result.content[0].text);
-} finally {
-  mock.restore();
-}
-`;
-
-      const output = await new Promise<string>((resolve, reject) => {
-        execFile(process.execPath, ["--eval", script], { cwd: process.cwd() }, (error, stdout) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve(stdout);
-        });
-      });
-
-      expect(output).toContain(":alpha");
-      expect(output).toContain(":beta");
+      expect(result.content[0].text).toContain(":alpha");
+      expect(result.content[0].text).toContain(":beta");
+      expect(vi.mocked(fileKindMod.classifyFileKind)).not.toHaveBeenCalled();
     });
   });
 });

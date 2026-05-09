@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { resolveEditAnchors, type Anchor, type HashlineToolEdit } from "../../src/hashline";
 
 describe("resolveEditAnchors", () => {

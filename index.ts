@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerCompatibilityNotifications } from "./src/compatibility-notify";
 import { registerEditTool } from "./src/edit";
 import { registerReadTool } from "./src/read";

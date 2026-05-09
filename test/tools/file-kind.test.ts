@@ -1,5 +1,5 @@
 import { execFile } from "child_process";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { access, appendFile, mkdtemp, mkdir, readFile, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import register from "../../index";
@@ -163,7 +163,7 @@ describe("classifyFileKind", () => {
     const initialText = "a".repeat(8 * 1024 * 1024);
     await withTempFile("growing.txt", initialText, async ({ path }) => {
       const loadPromise = loadFileKindAndText(path);
-      await Bun.sleep(1);
+      await new Promise((r) => setTimeout(r, 1));
       await appendFile(path, "TAIL\n", "utf-8");
 
       const loaded = await loadPromise;
@@ -171,7 +171,7 @@ describe("classifyFileKind", () => {
       if (loaded.kind !== "text") {
         return;
       }
-      expect(loaded.text.endsWith("TAIL\n")).toBeTrue();
+      expect(loaded.text.endsWith("TAIL\n")).toBe(true);
       expect(loaded.text.length).toBe(initialText.length + 5);
     });
   });
@@ -186,31 +186,12 @@ describe("classifyFileKind", () => {
       return;
     }
 
-    const script = [
-      'import { classifyFileKind } from "./src/file-kind";',
-      'console.log(JSON.stringify(await classifyFileKind("/dev/zero")));',
-    ].join("\n");
-
-    const result = await new Promise<string>((resolve, reject) => {
-      execFile(
-        process.execPath,
-        ["--eval", script],
-        { cwd: process.cwd(), timeout: 1000 },
-        (error, stdout) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve(stdout);
-        },
-      );
-    });
-
-    expect(JSON.parse(result.trim())).toEqual({
+    const result = await classifyFileKind("/dev/zero");
+    expect(result).toEqual({
       kind: "binary",
       description: "unsupported file type",
     });
-  });
+  }, 2000);
 
   it("rejects named pipes without opening them", async () => {
     if (process.platform === "win32") {
@@ -230,34 +211,15 @@ describe("classifyFileKind", () => {
         });
       });
 
-      const script = [
-        'import { classifyFileKind } from "./src/file-kind";',
-        `console.log(JSON.stringify(await classifyFileKind(${JSON.stringify(pipePath)})));`,
-      ].join("\n");
-
-      const result = await new Promise<string>((resolve, reject) => {
-        execFile(
-          process.execPath,
-          ["--eval", script],
-          { cwd: process.cwd(), timeout: 1000 },
-          (error, stdout) => {
-            if (error) {
-              reject(error);
-              return;
-            }
-            resolve(stdout);
-          },
-        );
-      });
-
-      expect(JSON.parse(result.trim())).toEqual({
+      const result = await classifyFileKind(pipePath);
+      expect(result).toEqual({
         kind: "binary",
         description: "unsupported file type",
       });
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
-  });
+  }, 2000);
 });
 
 describe("file kind guards in tools", () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { readFile } from "fs/promises";
 import register from "../../index";
 import { computeEditPreview } from "../../src/edit";
@@ -90,7 +90,7 @@ describe("edit tool replace_text op", () => {
         cwd,
       );
 
-      expect("diff" in preview).toBeTrue();
+      expect("diff" in preview).toBe(true);
       if (!("diff" in preview)) {
         return;
       }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { applyHashlineEdits, computeAffectedLineRange, computeLineHash, type HashlineEdit } from "../../src/hashline";
 
 function makeTag(line: number, text: string) {
@@ -224,7 +224,7 @@ describe("applyHashlineEdits — warning heuristics", () => {
 
     const result = applyHashlineEdits(content, edits);
 
-    expect(result.content.startsWith("HEADER\nline 1\nline 2")).toBeTrue();
+    expect(result.content.startsWith("HEADER\nline 1\nline 2")).toBe(true);
     expect(result.warnings).toBeUndefined();
   });
 });

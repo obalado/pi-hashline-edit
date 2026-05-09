@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { computeLineHash, resolveEditAnchors, type HashlineToolEdit } from "../../src/hashline";
 
 describe("strict edit input (no autocorrection)", () => {

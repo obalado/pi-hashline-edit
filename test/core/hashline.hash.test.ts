@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { applyHashlineEdits, computeLineHash, hashlineParseText } from "../../src/hashline";
 
 describe("computeLineHash", () => {

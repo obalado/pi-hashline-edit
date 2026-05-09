@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import * as os from "os";
 import { resolve } from "path";
 import { resolveToCwd } from "../../src/path-utils";

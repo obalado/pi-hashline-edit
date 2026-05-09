@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import register from "../../index";
 import { computeLineHash } from "../../src/hashline";
 import { makeFakePiRegistry, withTempFile } from "../support/fixtures";
@@ -168,7 +168,7 @@ describe("edit tool returnMode", () => {
 
       expect(result.details?.returnedRanges?.[0]?.start).toBe(10);
       expect(result.details?.returnedRanges?.[0]?.end).toBe(12);
-      expect(result.details?.returnedRanges?.[0]?.empty).toBeTrue();
+      expect(result.details?.returnedRanges?.[0]?.empty).toBe(true);
     });
   });
 });

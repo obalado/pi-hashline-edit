@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { readFile, writeFile } from "fs/promises";
 import register from "../../index";
 import { computeLineHash } from "../../src/hashline";

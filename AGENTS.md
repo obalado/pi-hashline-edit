@@ -8,10 +8,10 @@
 - `assets/` is documentation media only.
 
 ## Build, Test, and Development Commands
-- `bun install` — install dependencies.
-- `bun test` — run the full test suite with `bun:test`.
-- `bun test test/tools` — run tool-facing tests while iterating on `read`/`edit` behavior.
-- `bun test test/integration/strict-hashline-loop.test.ts` — run the strict hashline integration scenario.
+- `npm install` — install dependencies.
+- `npm test` — run the full test suite with `vitest`.
+- `npm test -- test/tools` — run tool-facing tests while iterating on `read`/`edit` behavior.
+- `npm test -- test/integration/strict-hashline-loop.test.ts` — run the strict hashline integration scenario.
 - There is no separate build step today; Pi loads the TypeScript entrypoints directly from `index.ts`.
 
 ## Coding Style & Naming Conventions
@@ -21,7 +21,7 @@
 - No ESLint or Prettier config is checked in, so preserve local style and keep diffs tight.
 
 ## Testing Guidelines
-- Write tests with `bun:test` and place them under the matching `test/` subfolder.
+- Write tests with `vitest` and place them under the matching `test/` subfolder.
 - Name files `<feature>.test.ts`; group assertions around one behavior per `describe` block.
 - Any change to anchor parsing, diff preview, compatibility mode, or atomic writes should include or update tests in the affected layer.
 - New integration scenarios (e.g. compound edits, stale-position edge cases) go under `test/integration/` as standalone `<scenario>.test.ts` files.
