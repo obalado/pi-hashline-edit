@@ -223,8 +223,12 @@ function formatMismatchError(
 	const sorted = [...displayLines].sort((a, b) => a - b);
 	const maxDisplayLine = sorted[sorted.length - 1] ?? 1;
 	const lineNumberWidth = String(maxDisplayLine).length;
+	const staleRefs = mismatches
+		.map((mismatch) => `${mismatch.line}#${mismatch.expected}`)
+		.join(", ");
 	const out: string[] = [
 		`[E_STALE_ANCHOR] ${mismatches.length} stale anchor${mismatches.length > 1 ? "s" : ""}. Retry with the >>> LINE#HASH lines below; keep both endpoints for range replaces.`,
+		`Stale refs: ${staleRefs}`,
 		"",
 	];
 
@@ -565,6 +569,14 @@ function buildLineIndex(content: string): LineIndex {
 		lineStarts,
 		hasTerminalNewline: content.endsWith("\n"),
 	};
+}
+
+function assertDoesNotEmptyFile(originalContent: string, result: string): void {
+	if (originalContent.length > 0 && result.length === 0) {
+		throw new Error(
+			"[E_WOULD_EMPTY] Refusing to empty a non-empty file through edit. If intentional, use a manual destructive operation outside the edit API.",
+		);
+	}
 }
 
 function previewText(text: string): string {
@@ -1180,6 +1192,7 @@ export function applyHashlineEdits(
 
 	// Phase 3: assemble result
 	const result = assembleEditResult(content, orderedSpans, signal);
+	assertDoesNotEmptyFile(content, result);
 	const changedRange = computeChangedLineRange(content, result);
 
 	return {

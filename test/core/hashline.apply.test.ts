@@ -215,9 +215,76 @@ describe("applyHashlineEdits — noop detection", () => {
     const edits: HashlineEdit[] = [{ op: "prepend", pos: makeTag(1, "aaa"), lines: [] }];
     expect(() => applyHashlineEdits(content, edits)).toThrow(/empty lines payload/);
   });
+
+  it("rejects deleting an entire non-empty file", () => {
+    const content = "aaa\nbbb";
+    const edits: HashlineEdit[] = [
+      { op: "replace", pos: makeTag(1, "aaa"), end: makeTag(2, "bbb"), lines: [] },
+    ];
+
+    expect(() => applyHashlineEdits(content, edits)).toThrow(/^\[E_WOULD_EMPTY\]/);
+  });
+
+  it("rejects replace_text emptying an entire non-empty file", () => {
+    const content = "aaa\nbbb";
+    const edits: HashlineEdit[] = [
+      { op: "replace_text", oldText: content, newText: "" },
+    ];
+
+    expect(() => applyHashlineEdits(content, edits)).toThrow(/^\[E_WOULD_EMPTY\]/);
+  });
+
+  it("allows writing content into an empty file", () => {
+    const edits: HashlineEdit[] = [{ op: "append", lines: ["aaa"] }];
+
+    const result = applyHashlineEdits("", edits);
+
+    expect(result.content).toBe("aaa");
+  });
+
+  it("allows whole-file rewrite when the final content is non-empty", () => {
+    const content = "aaa\nbbb";
+    const edits: HashlineEdit[] = [
+      { op: "replace", pos: makeTag(1, "aaa"), end: makeTag(2, "bbb"), lines: ["ccc"] },
+    ];
+
+    const result = applyHashlineEdits(content, edits);
+
+    expect(result.content).toBe("ccc");
+  });
+
+  it("allows replacing content with whitespace", () => {
+    const content = "aaa";
+    const edits: HashlineEdit[] = [
+      { op: "replace_text", oldText: content, newText: "\n" },
+    ];
+
+    const result = applyHashlineEdits(content, edits);
+
+    expect(result.content).toBe("\n");
+  });
 });
 
 describe("applyHashlineEdits — warning heuristics", () => {
+  it("warns when replacement starts with the previous surviving line", () => {
+    const content = "before\nold one\nold two\nafter";
+    const edits: HashlineEdit[] = [
+      {
+        op: "replace",
+        pos: makeTag(2, "old one"),
+        end: makeTag(3, "old two"),
+        lines: ["before", "new one", "new two"],
+      },
+    ];
+
+    const result = applyHashlineEdits(content, edits);
+
+    expect(result.content).toBe("before\nbefore\nnew one\nnew two\nafter");
+    expect(result.warnings).toEqual([
+      expect.stringContaining("replacement starts with a line that matches the preceding surviving line"),
+    ]);
+  });
+
   it("does not warn when a single prepend only shifts existing lines", () => {
     const content = Array.from({ length: 120 }, (_, index) => `line ${index + 1}`).join("\n");
     const edits: HashlineEdit[] = [{ op: "prepend", lines: ["HEADER"] }];

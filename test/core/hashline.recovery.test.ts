@@ -57,6 +57,18 @@ describe("applyHashlineEdits — error handling", () => {
 		);
 	});
 
+	it("lists stale anchor strings in mismatch errors", () => {
+		const content = "aaa\nbbb\nccc";
+		const edits: HashlineEdit[] = [
+			{ op: "replace", pos: { line: 1, hash: "XX" }, lines: ["A"] },
+			{ op: "replace", pos: { line: 3, hash: "YY" }, lines: ["C"] },
+		];
+
+		expect(() => applyHashlineEdits(content, edits)).toThrow(
+			/Stale refs: 1#XX, 3#YY/,
+		);
+	});
+
 	it("mismatch message exposes retryable >>> LINE#HASH snippets", () => {
 		expect(() =>
 			applyHashlineEdits("aaa", [

@@ -176,34 +176,30 @@ describe("edit tool text shape (token budget)", () => {
     });
   });
 
-  it("changed mode returns the empty-file insertion hint after deleting all content", async () => {
+  it("changed mode rejects deleting all content from a non-empty file", async () => {
     await withTempFile("sample.txt", "only\n", async ({ cwd }) => {
       const { pi, getTool } = makeFakePiRegistry();
       register(pi);
       const editTool = getTool("edit");
 
-      const result = await editTool.execute(
-        "e1",
-        {
-          path: "sample.txt",
-          edits: [
-            {
-              op: "replace",
-              pos: `1#${computeLineHash(1, "only")}`,
-              lines: [],
-            },
-          ],
-        },
-        undefined,
-        undefined,
-        { cwd } as any,
-      );
-
-      const text = getText(result);
-      expect(text).toBe(
-        "File is empty. Use edit with prepend or append and omit pos to insert content.",
-      );
-      expect(text).not.toContain("use read");
+      await expect(
+        editTool.execute(
+          "e1",
+          {
+            path: "sample.txt",
+            edits: [
+              {
+                op: "replace",
+                pos: `1#${computeLineHash(1, "only")}`,
+                lines: [],
+              },
+            ],
+          },
+          undefined,
+          undefined,
+          { cwd } as any,
+        ),
+      ).rejects.toThrow(/^\[E_WOULD_EMPTY\]/);
     });
   });
   it("changed mode omits oversized anchor payloads even when the changed span fits by line count", async () => {
