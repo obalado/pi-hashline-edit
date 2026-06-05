@@ -292,7 +292,12 @@ export function hashlineParseText(edit: string[] | string | null): string[] {
 }
 
 /**
- * Map flat tool-schema edits into typed internal representations.
+ * Validate + parse flat tool-schema edits into typed internal representations.
+ *
+ * This is the single source of truth for per-edit structural validation (shape,
+ * op constraints, field types) and anchor parsing. `assertEditRequest` validates
+ * only the request envelope (path, returnMode, etc.) and delegates here for
+ * edit payload validation.
  *
  * Strict: provided anchors must parse successfully. Missing anchors are
  * fine for append (→ EOF) and prepend (→ BOF), but a malformed anchor
@@ -304,45 +309,110 @@ export function hashlineParseText(edit: string[] | string | null): string[] {
  * - prepend + pos → prepend before that anchor
  * - replace_text + oldText/newText → exact unique text replace
  * - no anchors → file-level append/prepend (only for those ops)
- *
- * Unknown or missing ops are rejected explicitly.
  */
-export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
-	const result: HashlineEdit[] = [];
-	for (const edit of edits) {
-		const op = edit.op;
-		if (
-			op !== "replace" &&
-			op !== "append" &&
-			op !== "prepend" &&
-			op !== "replace_text"
-		) {
+
+const ITEM_KEYS = new Set(["op", "pos", "end", "lines", "oldText", "newText"]);
+
+function assertEditItem(edit: Record<string, unknown>, index: number): void {
+	const unknownKeys = Object.keys(edit).filter((key) => !ITEM_KEYS.has(key));
+	if (unknownKeys.length > 0) {
+		throw new Error(
+			`Edit ${index} contains unknown or unsupported fields: ${unknownKeys.join(", ")}.`,
+		);
+	}
+
+	if (typeof edit.op !== "string") {
+		throw new Error(`Edit ${index} requires an "op" string.`);
+	}
+	if (
+		edit.op !== "replace" &&
+		edit.op !== "append" &&
+		edit.op !== "prepend" &&
+		edit.op !== "replace_text"
+	) {
+		throw new Error(
+			`[E_BAD_OP] Edit ${index} uses unknown op "${edit.op}". Expected "replace", "append", "prepend", or "replace_text".`,
+		);
+	}
+
+	if ("pos" in edit && typeof edit.pos !== "string") {
+		throw new Error(
+			`Edit ${index} field "pos" must be a string when provided.`,
+		);
+	}
+	if ("end" in edit && typeof edit.end !== "string") {
+		throw new Error(
+			`Edit ${index} field "end" must be a string when provided.`,
+		);
+	}
+	if ("oldText" in edit && typeof edit.oldText !== "string") {
+		throw new Error(
+			`Edit ${index} field "oldText" must be a string when provided.`,
+		);
+	}
+	if ("newText" in edit && typeof edit.newText !== "string") {
+		throw new Error(
+			`Edit ${index} field "newText" must be a string when provided.`,
+		);
+	}
+	// lines type is validated downstream by hashlineParseText (handles
+	// string, array, and null), so we only reject when lines is present
+	// but not a valid content type for the op.
+
+	if (edit.op === "replace_text") {
+		if (typeof edit.oldText !== "string" || typeof edit.newText !== "string") {
 			throw new Error(
-				`[E_BAD_OP] Unknown edit op "${op}". Expected "replace", "append", "prepend", or "replace_text".`,
+				`[E_BAD_OP] Edit ${index} with op "replace_text" requires string "oldText" and "newText" fields.`,
 			);
 		}
+		if ("pos" in edit || "end" in edit || "lines" in edit) {
+			throw new Error(
+				`Edit ${index} with op "replace_text" only supports "oldText" and "newText".`,
+			);
+		}
+		return;
+	}
 
+	if (!("lines" in edit)) {
+		throw new Error(`Edit ${index} requires a "lines" field.`);
+	}
+
+	if ("oldText" in edit || "newText" in edit) {
+		throw new Error(
+			`Edit ${index} with op "${edit.op}" does not support "oldText" or "newText".`,
+		);
+	}
+
+	if (edit.op === "replace" && typeof edit.pos !== "string") {
+		throw new Error(
+			`[E_BAD_OP] Edit ${index} with op "replace" requires a "pos" anchor string.`,
+		);
+	}
+
+	if ((edit.op === "append" || edit.op === "prepend") && "end" in edit) {
+		throw new Error(
+			`[E_BAD_OP] Edit ${index} with op "${edit.op}" does not support "end". Use "pos" or omit it for file boundary insertion.`,
+		);
+	}
+}
+
+export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
+	const result: HashlineEdit[] = [];
+	for (const [index, edit] of edits.entries()) {
+		assertEditItem(edit as Record<string, unknown>, index);
+
+		const op = edit.op;
 		switch (op) {
 			case "replace": {
-				if (!edit.pos) {
-					throw new Error('[E_BAD_OP] Replace requires a "pos" anchor.');
-				}
-
 				result.push({
 					op: "replace",
-					pos: parseAnchorRef(edit.pos),
+					pos: parseAnchorRef(edit.pos!),
 					...(edit.end ? { end: parseAnchorRef(edit.end) } : {}),
 					lines: hashlineParseText(edit.lines ?? null),
 				});
 				break;
 			}
 			case "append": {
-				if (edit.end !== undefined) {
-					throw new Error(
-						'[E_BAD_OP] Append does not support "end". Use "pos" or omit it for EOF.',
-					);
-				}
-
 				result.push({
 					op: "append",
 					...(edit.pos ? { pos: parseAnchorRef(edit.pos) } : {}),
@@ -351,12 +421,6 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
 				break;
 			}
 			case "prepend": {
-				if (edit.end !== undefined) {
-					throw new Error(
-						'[E_BAD_OP] Prepend does not support "end". Use "pos" or omit it for BOF.',
-					);
-				}
-
 				result.push({
 					op: "prepend",
 					...(edit.pos ? { pos: parseAnchorRef(edit.pos) } : {}),
@@ -365,18 +429,10 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
 				break;
 			}
 			case "replace_text": {
-				const oldText = normalizeExactText(edit.oldText);
-				const newText = normalizeExactText(edit.newText);
-				if (oldText === undefined || newText === undefined) {
-					throw new Error(
-						'[E_BAD_OP] replace_text requires string "oldText" and "newText" fields.',
-					);
-				}
-
 				result.push({
 					op: "replace_text",
-					oldText,
-					newText,
+					oldText: normalizeExactText(edit.oldText)!,
+					newText: normalizeExactText(edit.newText)!,
 				});
 				break;
 			}
@@ -855,29 +911,24 @@ function assertNoConflictingSpans(spans: ResolvedEditSpan[]): void {
 	}
 }
 
-export function applyHashlineEdits(
-	content: string,
+/**
+ * Validate anchor hashes against the current file content.
+ *
+ * Checks every anchor in every edit for hash match (or fuzzy match when
+ * textHint is available). Returns mismatches for stale-anchor retry and
+ * appends boundary / single-anchor-range warnings to the shared warnings
+ * array. On range-OOB, throws immediately.
+ */
+function validateAnchorEdits(
 	edits: HashlineEdit[],
-	signal?: AbortSignal,
-): {
-	content: string;
-	firstChangedLine: number | undefined;
-	lastChangedLine: number | undefined;
-	warnings?: string[];
-	noopEdits?: NoopEdit[];
-} {
-	throwIfAborted(signal);
-	if (!edits.length)
-		return { content, firstChangedLine: undefined, lastChangedLine: undefined };
-
-	const workingEdits = edits.map(cloneHashlineEdit);
-	const lineIndex = buildLineIndex(content);
-	const noopEdits: NoopEdit[] = [];
-	const warnings: string[] = [];
-
+	lineIndex: LineIndex,
+	warnings: string[],
+	signal: AbortSignal | undefined,
+): { mismatches: HashMismatch[]; retryLines: Set<number> } {
 	const mismatches: HashMismatch[] = [];
 	const retryLines = new Set<number>();
 	const acceptedFuzzyRefs = new Set<string>();
+
 	function validate(ref: Anchor): boolean {
 		if (ref.line < 1 || ref.line > lineIndex.fileLines.length) {
 			throw new Error(
@@ -908,7 +959,7 @@ export function applyHashlineEdits(
 		return false;
 	}
 
-	for (const edit of workingEdits) {
+	for (const edit of edits) {
 		throwIfAborted(signal);
 		switch (edit.op) {
 			case "replace": {
@@ -984,18 +1035,27 @@ export function applyHashlineEdits(
 				break;
 		}
 	}
-	if (mismatches.length) {
-		throw new Error(
-			formatMismatchError(mismatches, lineIndex.fileLines, retryLines),
-		);
-	}
 
-	warnBareHashPrefixLines(workingEdits, lineIndex.fileLines, warnings);
-	maybeWarnSuspiciousUnicodeEscapePlaceholder(workingEdits, warnings);
+	return { mismatches, retryLines };
+}
 
+/**
+ * Resolve validated edits into ordered, conflict-free character-level spans.
+ *
+ * Each edit is mapped through resolveEditToSpan (which may produce a noop),
+ * duplicate spans are deduplicated, conflicts are rejected, and the remaining
+ * spans are sorted back-to-front for safe in-place assembly.
+ */
+function resolveEditSpans(
+	edits: HashlineEdit[],
+	content: string,
+	lineIndex: LineIndex,
+	noopEdits: NoopEdit[],
+	signal: AbortSignal | undefined,
+): ResolvedEditSpan[] {
 	const seenSpanKeys = new Set<string>();
 	const resolvedSpans: ResolvedEditSpan[] = [];
-	for (const [index, edit] of workingEdits.entries()) {
+	for (const [index, edit] of edits.entries()) {
 		throwIfAborted(signal);
 		const span = resolveEditToSpan(edit, index, content, lineIndex, noopEdits);
 		if (!span) {
@@ -1015,7 +1075,7 @@ export function applyHashlineEdits(
 
 	assertNoConflictingSpans(resolvedSpans);
 
-	const orderedSpans = [...resolvedSpans].sort((left, right) => {
+	return [...resolvedSpans].sort((left, right) => {
 		if (right.end !== left.end) {
 			return right.end - left.end;
 		}
@@ -1030,9 +1090,19 @@ export function applyHashlineEdits(
 		}
 		return left.index - right.index;
 	});
+}
 
+/**
+ * Apply ordered spans to content in reverse (back-to-front) order so earlier
+ * spans' offsets stay valid.
+ */
+function assembleEditResult(
+	content: string,
+	spans: ResolvedEditSpan[],
+	signal: AbortSignal | undefined,
+): string {
 	let result = content;
-	for (const span of orderedSpans) {
+	for (const span of spans) {
 		throwIfAborted(signal);
 		const replacement =
 			span.insertMode === "append-empty-origin"
@@ -1046,8 +1116,66 @@ export function applyHashlineEdits(
 					: span.replacement;
 		result = result.slice(0, span.start) + replacement + result.slice(span.end);
 	}
+	return result;
+}
 
+/**
+ * Apply hashline-anchored edits to file content.
+ *
+ * Three-phase pipeline:
+ *   1. validateAnchorEdits — check hash matches, collect warnings + mismatches
+ *   2. resolveEditSpans   — map edits to character spans, dedup, conflict-detect, sort
+ *   3. assembleEditResult — apply spans back-to-front, compute changed range
+ */
+export function applyHashlineEdits(
+	content: string,
+	edits: HashlineEdit[],
+	signal?: AbortSignal,
+): {
+	content: string;
+	firstChangedLine: number | undefined;
+	lastChangedLine: number | undefined;
+	warnings?: string[];
+	noopEdits?: NoopEdit[];
+} {
+	throwIfAborted(signal);
+	if (!edits.length)
+		return { content, firstChangedLine: undefined, lastChangedLine: undefined };
+
+	const workingEdits = edits.map(cloneHashlineEdit);
+	const lineIndex = buildLineIndex(content);
+	const noopEdits: NoopEdit[] = [];
+	const warnings: string[] = [];
+
+	// Phase 1: validate anchors
+	const { mismatches, retryLines } = validateAnchorEdits(
+		workingEdits,
+		lineIndex,
+		warnings,
+		signal,
+	);
+	if (mismatches.length) {
+		throw new Error(
+			formatMismatchError(mismatches, lineIndex.fileLines, retryLines),
+		);
+	}
+
+	warnBareHashPrefixLines(workingEdits, lineIndex.fileLines, warnings);
+	maybeWarnSuspiciousUnicodeEscapePlaceholder(workingEdits, warnings);
+
+	// Phase 2: resolve edits to ordered spans
+	const orderedSpans = resolveEditSpans(
+		workingEdits,
+		content,
+		lineIndex,
+		noopEdits,
+		signal,
+	);
+
+	// Phase 3: assemble result
+	const result = assembleEditResult(content, orderedSpans, signal);
 	const changedRange = computeChangedLineRange(content, result);
+
 	return {
 		content: result,
 		firstChangedLine: changedRange?.firstChangedLine,

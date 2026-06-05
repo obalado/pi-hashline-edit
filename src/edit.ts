@@ -1,7 +1,6 @@
 import { Markdown, Text } from "@earendil-works/pi-tui";
 import type {
 	ExtensionAPI,
-	Theme,
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
@@ -25,7 +24,6 @@ import {
 } from "./hashline";
 import { loadFileKindAndText } from "./file-kind";
 import { resolveToCwd } from "./path-utils";
-import { formatHashlineReadPreview } from "./read";
 import { throwIfAborted } from "./runtime";
 import { getFileSnapshot } from "./snapshot";
 import {
@@ -33,15 +31,20 @@ import {
 	buildFullResponse,
 	buildNoopResponse,
 	buildRangesResponse,
+	type EditMeta,
 	type ReturnMode,
 } from "./edit-response";
-
-type FgTheme = Pick<Theme, "fg">;
-type CallTheme = Pick<Theme, "fg" | "bold">;
-type RenderedMarkdownTheme = Pick<
-	Theme,
-	"fg" | "bold" | "italic" | "underline" | "strikethrough"
->;
+import {
+	buildAppliedChangedResultText,
+	createRenderedEditMarkdownTheme,
+	formatEditCall,
+	formatRenderedEditResultMarkdown,
+	getRenderablePreviewInput,
+	getRenderedEditTextContent,
+	isAppliedChangedResult,
+	type EditPreview,
+	type EditRenderState,
+} from "./edit-render";
 
 function stringEnumSchema<const Values extends readonly string[]>(
 	values: Values,
@@ -150,7 +153,7 @@ type FullContentPreview = {
 	nextOffset?: number;
 };
 
-type EditRequestParams = {
+export type EditRequestParams = {
 	path: string;
 	returnMode?: "changed" | "full" | "ranges";
 	returnRanges?: ReturnRange[];
@@ -168,7 +171,7 @@ type EditMetrics = {
 	removed_lines?: number;
 };
 
-type HashlineEditToolDetails = {
+export type HashlineEditToolDetails = {
 	diff: string;
 	firstChangedLine?: number;
 	/**
@@ -200,8 +203,6 @@ const EDIT_PROMPT_SNIPPET = readFileSync(
 ).trim();
 
 const ROOT_KEYS = new Set(["path", "returnMode", "returnRanges", "edits"]);
-const ITEM_KEYS = new Set(["op", "pos", "end", "lines", "oldText", "newText"]);
-
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -210,26 +211,15 @@ function hasOwn(request: Record<string, unknown>, key: string): boolean {
 	return Object.hasOwn(request, key);
 }
 
-function isStringArray(value: unknown): value is string[] {
-	return (
-		Array.isArray(value) && value.every((item) => typeof item === "string")
-	);
-}
-
-function getVisibleLines(text: string): string[] {
-	if (text.length === 0) {
-		return [];
-	}
-	const lines = text.split("\n");
-	return text.endsWith("\n") ? lines.slice(0, -1) : lines;
-}
-
-// Validates the canonical edit request after normalizeEditRequest has converged
-// any model dialects. Intentional overlap with the published TypeBox schema: pi
-// normally runs AJV validation before execute(), but that can be disabled in
-// environments without runtime code generation support, so the semantic checks
-// here are the backstop. Inputs reaching this point are already normalized, so
-// there is no dialect handling left — only canonical-shape validation.
+// Validates the canonical edit request envelope after normalizeEditRequest has
+// converged any model dialects. Per-edit structural validation is delegated to
+// resolveEditAnchors (src/hashline.ts), which is the single source of truth for
+// edit-item shape + op constraints. This function validates only the root-level
+// request fields: path, returnMode, returnRanges, and that edits is an array.
+//
+// Intentional overlap with the published TypeBox schema: pi normally runs AJV
+// validation before execute(), but that can be disabled in environments without
+// runtime code generation support, so the semantic checks here are the backstop.
 export function assertEditRequest(
 	request: unknown,
 ): asserts request is EditRequestParams {
@@ -312,493 +302,115 @@ export function assertEditRequest(
 		);
 	}
 
-	if (!Array.isArray(request.edits)) {
-		return;
-	}
-
-	for (const [index, edit] of request.edits.entries()) {
-		if (!isRecord(edit)) {
-			throw new Error(`Edit ${index} must be an object.`);
-		}
-
-		const unknownItemKeys = Object.keys(edit).filter(
-			(key) => !ITEM_KEYS.has(key),
-		);
-		if (unknownItemKeys.length > 0) {
-			throw new Error(
-				`Edit ${index} contains unknown or unsupported fields: ${unknownItemKeys.join(", ")}.`,
-			);
-		}
-
-		if (typeof edit.op !== "string") {
-			throw new Error(`Edit ${index} requires an "op" string.`);
-		}
-		if (
-			edit.op !== "replace" &&
-			edit.op !== "append" &&
-			edit.op !== "prepend" &&
-			edit.op !== "replace_text"
-		) {
-			throw new Error(
-				`Edit ${index} uses unknown op "${edit.op}". Expected "replace", "append", "prepend", or "replace_text".`,
-			);
-		}
-
-		if (hasOwn(edit, "pos") && typeof edit.pos !== "string") {
-			throw new Error(
-				`Edit ${index} field "pos" must be a string when provided.`,
-			);
-		}
-		if (hasOwn(edit, "end") && typeof edit.end !== "string") {
-			throw new Error(
-				`Edit ${index} field "end" must be a string when provided.`,
-			);
-		}
-		if (hasOwn(edit, "oldText") && typeof edit.oldText !== "string") {
-			throw new Error(
-				`Edit ${index} field "oldText" must be a string when provided.`,
-			);
-		}
-		if (hasOwn(edit, "newText") && typeof edit.newText !== "string") {
-			throw new Error(
-				`Edit ${index} field "newText" must be a string when provided.`,
-			);
-		}
-		if (hasOwn(edit, "lines") && !isStringArray(edit.lines)) {
-			throw new Error(`Edit ${index} field "lines" must be a string array.`);
-		}
-
-		if (edit.op === "replace_text") {
-			if (
-				typeof edit.oldText !== "string" ||
-				typeof edit.newText !== "string"
-			) {
-				throw new Error(
-					`Edit ${index} with op "replace_text" requires string "oldText" and "newText" fields.`,
-				);
-			}
-			if (hasOwn(edit, "pos") || hasOwn(edit, "end") || hasOwn(edit, "lines")) {
-				throw new Error(
-					`Edit ${index} with op "replace_text" only supports "oldText" and "newText".`,
-				);
-			}
-			continue;
-		}
-
-		if (!hasOwn(edit, "lines")) {
-			throw new Error(`Edit ${index} requires a "lines" field.`);
-		}
-
-		if (hasOwn(edit, "oldText") || hasOwn(edit, "newText")) {
-			throw new Error(
-				`Edit ${index} with op "${edit.op}" does not support "oldText" or "newText".`,
-			);
-		}
-
-		if (edit.op === "replace" && typeof edit.pos !== "string") {
-			throw new Error(
-				`Edit ${index} with op "replace" requires a "pos" anchor string.`,
-			);
-		}
-
-		if (
-			(edit.op === "append" || edit.op === "prepend") &&
-			hasOwn(edit, "end")
-		) {
-			throw new Error(
-				`Edit ${index} with op "${edit.op}" does not support "end". Use "pos" or omit it for file boundary insertion.`,
-			);
-		}
-	}
+	// Per-edit validation lives in resolveEditAnchors — the single source of
+	// truth for edit-item shape, op constraints, and anchor parsing.
 }
 
-type EditPreview = { diff: string } | { error: string };
-type EditRenderState = {
-	argsKey?: string;
-	preview?: EditPreview;
-	previewGeneration?: number;
-};
+/**
+ * Shared edit pipeline: normalize, validate, read file, resolve anchors,
+ * and apply edits. Both `computeEditPreview` (dry-run) and `execute()`
+ * (real) call this; the access mode parameter controls whether the file
+ * must be writable.
+ */
+async function executeEditPipeline(
+	request: unknown,
+	cwd: string,
+	accessMode: number,
+	signal?: AbortSignal,
+): Promise<{
+	path: string;
+	toolEdits: HashlineToolEdit[];
+	originalNormalized: string;
+	result: string;
+	bom: string;
+	originalEnding: "\r\n" | "\n";
+	hadUtf8DecodeErrors: boolean;
+	warnings: string[];
+	noopEdits?: { editIndex: number; loc: string; currentContent: string }[];
+	firstChangedLine?: number;
+	lastChangedLine?: number;
+}> {
+	const normalized = normalizeEditRequest(request);
+	assertEditRequest(normalized);
 
-function getRenderablePreviewInput(args: unknown): EditRequestParams | null {
-	let normalized: unknown;
+	const params = normalized as EditRequestParams;
+	const path = params.path;
+	const absolutePath = resolveToCwd(path, cwd);
+	const toolEdits = Array.isArray(params.edits)
+		? (params.edits as HashlineToolEdit[])
+		: [];
+
+	if (toolEdits.length === 0) {
+		throw new Error("No edits provided.");
+	}
+
+	throwIfAborted(signal);
 	try {
-		normalized = normalizeEditRequest(args);
-	} catch {
-		return null;
-	}
-	if (!isRecord(normalized) || typeof normalized.path !== "string") {
-		return null;
-	}
-
-	const request: EditRequestParams = { path: normalized.path };
-	if (Array.isArray(normalized.edits)) {
-		request.edits = normalized.edits as HashlineToolEdit[];
-	}
-
-	return request.edits !== undefined ? request : null;
-}
-
-function colorDiffLines(lines: string[], theme: FgTheme): string[] {
-	return lines.map((line) => {
-		if (line.startsWith("+") && !line.startsWith("+++")) {
-			return theme.fg("success", line);
+		await fsAccess(absolutePath, accessMode);
+	} catch (error: unknown) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === "ENOENT") {
+			throw new Error(`File not found: ${path}`);
 		}
-		if (line.startsWith("-") && !line.startsWith("---")) {
-			return theme.fg("error", line);
+		if (code === "EACCES" || code === "EPERM") {
+			const accessLabel =
+				accessMode & constants.W_OK ? "not writable" : "not readable";
+			throw new Error(`File is ${accessLabel}: ${path}`);
 		}
-		return theme.fg("dim", line);
-	});
-}
+		throw new Error(`Cannot access file: ${path}`);
+	}
 
-function formatPreviewDiff(
-	diff: string,
-	expanded: boolean,
-	theme: FgTheme,
-): string {
-	const lines = diff.split("\n");
-	const maxLines = expanded ? 40 : 16;
-	const shown = colorDiffLines(lines.slice(0, maxLines), theme);
-
-	if (lines.length > maxLines) {
-		shown.push(
-			theme.fg("muted", `... ${lines.length - maxLines} more diff lines`),
+	throwIfAborted(signal);
+	const file = await loadFileKindAndText(absolutePath);
+	if (file.kind === "directory") {
+		throw new Error(
+			`Path is a directory: ${path}. Use ls to inspect directories.`,
 		);
 	}
-	return shown.join("\n");
-}
-
-function formatResultDiff(diff: string, theme: FgTheme): string {
-	return colorDiffLines(diff.split("\n"), theme).join("\n");
-}
-
-function getRenderedEditTextContent(result: {
-	content?: Array<{ type: string; text?: string }>;
-}): string | undefined {
-	const textContent = result.content?.find(
-		(entry): entry is { type: "text"; text: string } =>
-			entry.type === "text" && typeof entry.text === "string",
-	);
-	return textContent?.text;
-}
-
-function extractRenderedWarnings(text: string | undefined): string | undefined {
-	return text?.match(/(?:^|\n)Warnings:\n[\s\S]*$/)?.[0]?.trimStart();
-}
-
-function isAppliedChangedResult(
-	details: HashlineEditToolDetails | undefined,
-): boolean {
-	const metrics = details?.metrics;
-	return (
-		metrics?.classification === "applied" &&
-		metrics.return_mode === "changed" &&
-		metrics.added_lines !== undefined &&
-		metrics.removed_lines !== undefined
-	);
-}
-
-function buildAppliedChangedResultText(
-	text: string | undefined,
-	details: HashlineEditToolDetails | undefined,
-	preview: EditPreview | undefined,
-	theme: FgTheme,
-): string | undefined {
-	const previewDiff =
-		preview && !("error" in preview) ? preview.diff : undefined;
-	const sections: string[] = [];
-
-	if (details?.diff && details.diff !== previewDiff) {
-		sections.push(formatResultDiff(details.diff, theme));
-	}
-
-	const warnings = extractRenderedWarnings(text);
-	if (warnings) sections.push(warnings);
-
-	return sections.length > 0 ? sections.join("\n\n") : undefined;
-}
-
-function trimEdgeEmptyLines(lines: string[]): string[] {
-	let start = 0;
-	let end = lines.length;
-
-	while (start < end && lines[start] === "") {
-		start++;
-	}
-	while (end > start && lines[end - 1] === "") {
-		end--;
-	}
-
-	return lines.slice(start, end);
-}
-
-function isRenderedEditSectionBoundary(line: string): boolean {
-	return (
-		line.startsWith("--- Anchors ") ||
-		line === "Warnings:" ||
-		line === "Structure outline:" ||
-		/^--- Range \d+ /.test(line)
-	);
-}
-
-function formatRenderedEditResultMarkdown(text: string): string {
-	const lines = text.split("\n");
-	const sections: string[] = [];
-	let plainLines: string[] = [];
-
-	const flushPlainLines = () => {
-		const trimmed = trimEdgeEmptyLines(plainLines);
-		if (trimmed.length > 0) {
-			sections.push(trimmed.join("\n"));
-		}
-		plainLines = [];
-	};
-
-	let index = 0;
-	while (index < lines.length) {
-		const line = lines[index]!;
-
-		if (line.startsWith("--- Anchors ")) {
-			flushPlainLines();
-			const title = line.replace(/^---\s*/, "").replace(/\s*---$/, "");
-			index++;
-			const bodyLines: string[] = [];
-			while (
-				index < lines.length &&
-				!isRenderedEditSectionBoundary(lines[index]!)
-			) {
-				bodyLines.push(lines[index]!);
-				index++;
-			}
-			sections.push(
-				[
-					`#### ${title}`,
-					"```text",
-					...trimEdgeEmptyLines(bodyLines),
-					"```",
-				].join("\n"),
-			);
-			continue;
-		}
-
-		plainLines.push(line);
-		index++;
-	}
-
-	flushPlainLines();
-
-	return sections.join("\n\n");
-}
-
-function createRenderedEditMarkdownTheme(theme: RenderedMarkdownTheme) {
-	return {
-		heading: (text: string) => theme.fg("mdHeading", text),
-		link: (text: string) => theme.fg("mdLink", text),
-		linkUrl: (text: string) => theme.fg("mdLinkUrl", text),
-		code: (text: string) => theme.fg("mdCode", text),
-		codeBlock: (text: string) => theme.fg("mdCodeBlock", text),
-		codeBlockBorder: (text: string) => theme.fg("mdCodeBlockBorder", text),
-		quote: (text: string) => theme.fg("mdQuote", text),
-		quoteBorder: (text: string) => theme.fg("mdQuoteBorder", text),
-		hr: (text: string) => theme.fg("mdHr", text),
-		listBullet: (text: string) => theme.fg("mdListBullet", text),
-		bold: (text: string) => theme.bold(text),
-		italic: (text: string) => (theme.italic ? theme.italic(text) : text),
-		underline: (text: string) =>
-			theme.underline ? theme.underline(text) : text,
-		strikethrough: (text: string) =>
-			theme.strikethrough ? theme.strikethrough(text) : text,
-		highlightCode: (code: string, lang?: string) =>
-			code.split("\n").map((line) => {
-				if (lang === "diff") {
-					if (line.startsWith("+") && !line.startsWith("+++")) {
-						return theme.fg("toolDiffAdded", line);
-					}
-					if (line.startsWith("-") && !line.startsWith("---")) {
-						return theme.fg("toolDiffRemoved", line);
-					}
-					return theme.fg("toolDiffContext", line);
-				}
-
-				return theme.fg("mdCodeBlock", line);
-			}),
-	};
-}
-
-function formatRequestedRangePreviews(
-	text: string,
-	ranges: ReturnRange[],
-): { text: string; returnedRanges: ReturnedRangePreview[] } {
-	const totalLines = getVisibleLines(text).length;
-	const returnedRanges = ranges.map((range) => {
-		const requestedEnd = range.end ?? range.start;
-		const preview = formatHashlineReadPreview(text, {
-			offset: range.start,
-			limit: requestedEnd - range.start + 1,
-		});
-		const hasReturnedLines = /^\s*\d+#/m.test(preview.text);
-		const actualEnd = hasReturnedLines
-			? preview.nextOffset !== undefined
-				? preview.nextOffset - 1
-				: Math.min(requestedEnd, totalLines)
-			: requestedEnd;
-		return {
-			start: range.start,
-			end: hasReturnedLines ? Math.max(range.start, actualEnd) : actualEnd,
-			text: preview.text,
-			...(preview.nextOffset !== undefined
-				? { nextOffset: preview.nextOffset }
-				: {}),
-			...(!hasReturnedLines ? { empty: true as const } : {}),
-		};
-	});
-
-	const formatted = returnedRanges
-		.map(
-			(range, index) =>
-				`--- Range ${index + 1} (lines ${range.start}-${range.end}) ---\n${range.text}`,
-		)
-		.join("\n\n");
-
-	return {
-		text: formatted,
-		returnedRanges,
-	};
-}
-
-const STRUCTURE_MARKER_RE =
-	/^(#{1,6}\s+.+|(export\s+)?(async\s+)?function\s+\w+|(export\s+)?class\s+\w+|(export\s+)?interface\s+\w+|(export\s+)?type\s+\w+|(export\s+)?enum\s+\w+|(const|let|var)\s+\w+\s*=\s*(async\s*)?\()/;
-
-function truncateOutlineEntry(text: string, max = 88): string {
-	return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
-}
-
-function collectOutlineEntries(previewText: string): string[] {
-	const structural: string[] = [];
-	for (const line of previewText.split("\n")) {
-		const match = line.match(/^\s*(\d+)#[A-Z]{2}:(.*)$/);
-		if (!match) continue;
-		const content = match[2]!.trim();
-		if (content.length === 0) continue;
-		if (!STRUCTURE_MARKER_RE.test(content)) continue;
-		structural.push(
-			`${match[1]!}: ${truncateOutlineEntry(content.replace(/\s+/g, " "))}`,
+	if (file.kind === "image") {
+		throw new Error(
+			`Path is an image file: ${path}. Hashline edit only supports text files.`,
 		);
 	}
-	return structural.slice(0, 8);
-}
-
-function buildStructureOutline(
-	sections: Array<{ label?: string; previewText: string }>,
-): { text: string; outline: string[] } {
-	const outlineLines: string[] = [];
-	const detailOutline: string[] = [];
-	const useSectionLabels = sections.length > 1;
-
-	for (const section of sections) {
-		const entries = collectOutlineEntries(section.previewText);
-		if (entries.length === 0) continue;
-		if (useSectionLabels && section.label) {
-			outlineLines.push(`- ${section.label}`);
-		}
-		for (const entry of entries) {
-			outlineLines.push(useSectionLabels ? `  - ${entry}` : `- ${entry}`);
-			detailOutline.push(section.label ? `${section.label}: ${entry}` : entry);
-		}
+	if (file.kind === "binary") {
+		throw new Error(
+			`Path is a binary file: ${path} (${file.description}). Hashline edit only supports text files.`,
+		);
 	}
 
-	if (outlineLines.length === 0) {
-		return { text: "", outline: [] };
-	}
+	throwIfAborted(signal);
+	const { bom, text: rawContent } = stripBom(file.text);
+	const originalEnding = detectLineEnding(rawContent);
+	const originalNormalized = normalizeToLF(rawContent);
+
+	const resolved = resolveEditAnchors(toolEdits);
+	const anchorResult = applyHashlineEdits(originalNormalized, resolved, signal);
+
 	return {
-		text: ["Structure outline:", ...outlineLines].join("\n"),
-		outline: detailOutline,
+		path,
+		toolEdits,
+		originalNormalized,
+		result: anchorResult.content,
+		bom,
+		originalEnding,
+		hadUtf8DecodeErrors: file.hadUtf8DecodeErrors === true,
+		warnings: [...(anchorResult.warnings ?? [])],
+		noopEdits: anchorResult.noopEdits,
+		firstChangedLine: anchorResult.firstChangedLine,
+		lastChangedLine: anchorResult.lastChangedLine,
 	};
-}
-
-function formatEditCall(
-	args: EditRequestParams | undefined,
-	state: EditRenderState,
-	expanded: boolean,
-	theme: CallTheme,
-): string {
-	const path = args?.path;
-	const pathDisplay =
-		typeof path === "string" && path.length > 0
-			? theme.fg("accent", path)
-			: theme.fg("toolOutput", "...");
-	let text = `${theme.fg("toolTitle", theme.bold("edit"))} ${pathDisplay}`;
-
-	if (!state.preview) {
-		return text;
-	}
-
-	if ("error" in state.preview) {
-		text += `\n\n${theme.fg("error", state.preview.error)}`;
-		return text;
-	}
-
-	if (state.preview.diff) {
-		text += `\n\n${formatPreviewDiff(state.preview.diff, expanded, theme)}`;
-	}
-	return text;
 }
 
 export async function computeEditPreview(
 	request: unknown,
 	cwd: string,
 ): Promise<EditPreview> {
-	let normalized: unknown;
 	try {
-		normalized = normalizeEditRequest(request);
-		assertEditRequest(normalized);
-	} catch (error: unknown) {
-		return { error: error instanceof Error ? error.message : String(error) };
-	}
-
-	const params = normalized as EditRequestParams;
-	const path = params.path;
-	const absolutePath = resolveToCwd(path, cwd);
-	const toolEdits = Array.isArray(params.edits) ? params.edits : [];
-
-	if (toolEdits.length === 0) {
-		return { error: "No edits provided." };
-	}
-
-	try {
-		await fsAccess(absolutePath, constants.R_OK);
-	} catch (error: unknown) {
-		const code = (error as NodeJS.ErrnoException).code;
-		if (code === "ENOENT") {
-			return { error: `File not found: ${path}` };
-		}
-		if (code === "EACCES" || code === "EPERM") {
-			return { error: `File is not readable: ${path}` };
-		}
-		return { error: `Cannot access file: ${path}` };
-	}
-
-	try {
-		const file = await loadFileKindAndText(absolutePath);
-		if (file.kind === "directory") {
-			return {
-				error: `Path is a directory: ${path}. Use ls to inspect directories.`,
-			};
-		}
-		if (file.kind === "image") {
-			return {
-				error: `Path is an image file: ${path}. Hashline edit only supports text files.`,
-			};
-		}
-		if (file.kind === "binary") {
-			return {
-				error: `Path is a binary file: ${path} (${file.description}). Hashline edit only supports text files.`,
-			};
-		}
-
-		const originalNormalized = normalizeToLF(stripBom(file.text).text);
-
-		const resolved = resolveEditAnchors(toolEdits);
-		const result = applyHashlineEdits(originalNormalized, resolved).content;
+		const { path, originalNormalized, result } = await executeEditPipeline(
+			request,
+			cwd,
+			constants.R_OK,
+		);
 
 		if (originalNormalized === result) {
 			return {
@@ -952,82 +564,39 @@ const editToolDefinition: EditToolDefinition = {
 	},
 
 	async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-		// Normalize again here so execute does not depend on prepareArguments having
-		// run. prepareArguments converges dialects before validation in the normal
-		// Pi path, but direct callers (tests, alternate hosts) may reach execute()
-		// without it. normalizeEditRequest is idempotent on canonical input.
+		// normalizeEditRequest is re-applied here so execute does not depend on
+		// prepareArguments having run. Idempotent on canonical input.
 		const normalized = normalizeEditRequest(params);
-		assertEditRequest(normalized);
-
 		const normalizedParams = normalized as EditRequestParams;
 		const path = normalizedParams.path;
 		const absolutePath = resolveToCwd(path, ctx.cwd);
 		const returnMode = normalizedParams.returnMode ?? "changed";
 		const requestedReturnRanges = normalizedParams.returnRanges;
-		const toolEdits = Array.isArray(normalizedParams.edits)
-			? (normalizedParams.edits as HashlineToolEdit[])
-			: [];
-
-		if (toolEdits.length === 0) {
-			return {
-				content: [{ type: "text", text: "No edits provided." }],
-				isError: true,
-				details: { diff: "", firstChangedLine: undefined },
-			};
-		}
 
 		const mutationTargetPath = await resolveMutationTargetPath(absolutePath);
 		return withFileMutationQueue(mutationTargetPath, async () => {
 			throwIfAborted(signal);
-			try {
-				await fsAccess(absolutePath, constants.R_OK | constants.W_OK);
-			} catch (error: unknown) {
-				const code = (error as NodeJS.ErrnoException).code;
-				if (code === "ENOENT") {
-					throw new Error(`File not found: ${path}`);
-				}
-				if (code === "EACCES" || code === "EPERM") {
-					throw new Error(`File is not writable: ${path}`);
-				}
-				throw new Error(`Cannot access file: ${path}`);
-			}
 
-			throwIfAborted(signal);
-			const file = await loadFileKindAndText(absolutePath);
-			if (file.kind === "directory") {
-				throw new Error(
-					`Path is a directory: ${path}. Use ls to inspect directories.`,
-				);
-			}
-			if (file.kind === "image") {
-				throw new Error(
-					`Path is an image file: ${path}. Hashline edit only supports text files.`,
-				);
-			}
-			if (file.kind === "binary") {
-				throw new Error(
-					`Path is a binary file: ${path} (${file.description}). Hashline edit only supports text files.`,
-				);
-			}
-
-			throwIfAborted(signal);
-			const { bom, text: content } = stripBom(file.text);
-			const originalEnding = detectLineEnding(content);
-			const originalNormalized = normalizeToLF(content);
-
-			const resolved = resolveEditAnchors(toolEdits);
-			const anchorResult = applyHashlineEdits(
+			const {
 				originalNormalized,
-				resolved,
+				result,
+				bom,
+				originalEnding,
+				hadUtf8DecodeErrors,
+				warnings,
+				noopEdits,
+				firstChangedLine,
+				lastChangedLine,
+			} = await executeEditPipeline(
+				normalized,
+				ctx.cwd,
+				constants.R_OK | constants.W_OK,
 				signal,
 			);
-			const result = anchorResult.content;
-			const warnings = [...(anchorResult.warnings ?? [])];
-			const noopEdits = anchorResult.noopEdits;
-			const firstChangedLine = anchorResult.firstChangedLine;
-			const lastChangedLine = anchorResult.lastChangedLine;
 
-			const editsAttempted = toolEdits.length;
+			const editsAttempted = Array.isArray(normalizedParams.edits)
+				? normalizedParams.edits.length
+				: 0;
 
 			if (originalNormalized === result) {
 				const noopSnapshotId = (await getFileSnapshot(absolutePath)).snapshotId;
@@ -1038,16 +607,15 @@ const editToolDefinition: EditToolDefinition = {
 					noopEdits,
 					originalNormalized,
 					snapshotId: noopSnapshotId,
-					editsAttempted,
+					editMeta: {
+						editsAttempted,
+						noopEditsCount: noopEdits?.length ?? 0,
+					},
 					warnings,
-					formatHashlineReadPreview: (text) =>
-						formatHashlineReadPreview(text, { offset: 1 }),
-					formatRequestedRangePreviews,
-					buildStructureOutline,
 				});
 			}
 
-			if (file.hadUtf8DecodeErrors === true) {
+			if (hadUtf8DecodeErrors) {
 				warnings.push(
 					"Non-UTF-8 bytes were shown as U+FFFD; this edit rewrote the file as UTF-8.",
 				);
@@ -1061,6 +629,13 @@ const editToolDefinition: EditToolDefinition = {
 			const updatedSnapshotId = (await getFileSnapshot(absolutePath))
 				.snapshotId;
 
+			const editMeta: EditMeta = {
+				editsAttempted,
+				noopEditsCount: noopEdits?.length ?? 0,
+				firstChangedLine,
+				lastChangedLine,
+			};
+
 			const successInput = {
 				path,
 				returnMode: returnMode as ReturnMode,
@@ -1068,15 +643,8 @@ const editToolDefinition: EditToolDefinition = {
 				originalNormalized,
 				result,
 				warnings,
-				firstChangedLine,
-				lastChangedLine,
 				snapshotId: updatedSnapshotId,
-				editsAttempted,
-				noopEditsCount: noopEdits?.length ?? 0,
-				formatHashlineReadPreview: (text: string) =>
-					formatHashlineReadPreview(text, { offset: 1 }),
-				formatRequestedRangePreviews,
-				buildStructureOutline,
+				editMeta,
 			};
 
 			if (returnMode === "full") return buildFullResponse(successInput);
