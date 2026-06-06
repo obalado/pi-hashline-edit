@@ -80,14 +80,24 @@ describe("resolveEditAnchors", () => {
 		];
 		const resolved = resolveEditAnchors(edits);
 		expect(resolved[0].op).toBe("append");
-		expect(resolved[0].pos?.line).toBe(5);
+		const append = resolved[0] as {
+			op: "append";
+			pos?: Anchor;
+			lines: string[];
+		};
+		expect(append.pos?.line).toBe(5);
 	});
 
 	it("resolves append without pos (EOF)", () => {
 		const edits: HashlineToolEdit[] = [{ op: "append", lines: ["new"] }];
 		const resolved = resolveEditAnchors(edits);
 		expect(resolved[0].op).toBe("append");
-		expect(resolved[0].pos).toBeUndefined();
+		const append = resolved[0] as {
+			op: "append";
+			pos?: Anchor;
+			lines: string[];
+		};
+		expect(append.pos).toBeUndefined();
 	});
 
 	it("rejects append with end", () => {
@@ -111,7 +121,12 @@ describe("resolveEditAnchors", () => {
 		const edits: HashlineToolEdit[] = [{ op: "prepend", lines: ["new"] }];
 		const resolved = resolveEditAnchors(edits);
 		expect(resolved[0].op).toBe("prepend");
-		expect(resolved[0].pos).toBeUndefined();
+		const prepend = resolved[0] as {
+			op: "prepend";
+			pos?: Anchor;
+			lines: string[];
+		};
+		expect(prepend.pos).toBeUndefined();
 	});
 
 	it("rejects prepend with end", () => {
@@ -123,20 +138,30 @@ describe("resolveEditAnchors", () => {
 		);
 	});
 
-	it("parses string lines input", () => {
+	it("rejects string lines input", () => {
 		const edits: HashlineToolEdit[] = [
-			{ op: "replace", pos: "1#ZZ", lines: "hello\nworld\n" },
+			{
+				op: "replace",
+				pos: "1#ZZ",
+				lines: "hello\nworld\n",
+			} as unknown as HashlineToolEdit,
 		];
-		const resolved = resolveEditAnchors(edits);
-		expect(resolved[0].lines).toEqual(["hello", "world"]);
+		expect(() => resolveEditAnchors(edits)).toThrow(
+			/lines" must be a string array/i,
+		);
 	});
 
-	it("parses null lines as empty array", () => {
+	it("rejects null lines input", () => {
 		const edits: HashlineToolEdit[] = [
-			{ op: "replace", pos: "1#ZZ", lines: null },
+			{
+				op: "replace",
+				pos: "1#ZZ",
+				lines: null,
+			} as unknown as HashlineToolEdit,
 		];
-		const resolved = resolveEditAnchors(edits);
-		expect(resolved[0].lines).toEqual([]);
+		expect(() => resolveEditAnchors(edits)).toThrow(
+			/lines" must be a string array/i,
+		);
 	});
 
 	it("throws on unknown op", () => {

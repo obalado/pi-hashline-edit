@@ -567,6 +567,7 @@ const editToolDefinition: EditToolDefinition = {
 		// normalizeEditRequest is re-applied here so execute does not depend on
 		// prepareArguments having run. Idempotent on canonical input.
 		const normalized = normalizeEditRequest(params);
+		assertEditRequest(normalized);
 		const normalizedParams = normalized as EditRequestParams;
 		const path = normalizedParams.path;
 		const absolutePath = resolveToCwd(path, ctx.cwd);

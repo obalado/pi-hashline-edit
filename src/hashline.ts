@@ -313,6 +313,12 @@ export function hashlineParseText(edit: string[] | string | null): string[] {
 
 const ITEM_KEYS = new Set(["op", "pos", "end", "lines", "oldText", "newText"]);
 
+function isStringArray(value: unknown): value is string[] {
+	return (
+		Array.isArray(value) && value.every((item) => typeof item === "string")
+	);
+}
+
 function assertEditItem(edit: Record<string, unknown>, index: number): void {
 	const unknownKeys = Object.keys(edit).filter((key) => !ITEM_KEYS.has(key));
 	if (unknownKeys.length > 0) {
@@ -355,9 +361,9 @@ function assertEditItem(edit: Record<string, unknown>, index: number): void {
 			`Edit ${index} field "newText" must be a string when provided.`,
 		);
 	}
-	// lines type is validated downstream by hashlineParseText (handles
-	// string, array, and null), so we only reject when lines is present
-	// but not a valid content type for the op.
+	if ("lines" in edit && !isStringArray(edit.lines)) {
+		throw new Error(`Edit ${index} field "lines" must be a string array.`);
+	}
 
 	if (edit.op === "replace_text") {
 		if (typeof edit.oldText !== "string" || typeof edit.newText !== "string") {

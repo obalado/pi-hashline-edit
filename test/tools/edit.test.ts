@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFile } from "fs/promises";
 import Ajv from "ajv";
 import {
 	assertEditRequest,
@@ -119,6 +120,51 @@ describe("registerEditTool", () => {
 			path: "a.ts",
 			edits: [{ op: "replace_text", oldText: "x", newText: "y" }],
 		});
+	});
+
+	it("rejects malformed null lines during direct execute without modifying the file", async () => {
+		await withTempFile("sample.txt", "aaa\nbbb\n", async ({ cwd, path }) => {
+			const { pi, getTool } = makeFakePiRegistry();
+			registerEditTool(pi);
+			const editTool = getTool("edit");
+
+			await expect(
+				editTool.execute(
+					"e1",
+					{
+						path: "sample.txt",
+						edits: [
+							{
+								op: "replace",
+								pos: `1#${computeLineHash(1, "aaa")}:aaa`,
+								lines: null,
+							},
+						],
+					},
+					undefined,
+					undefined,
+					{ cwd } as any,
+				),
+			).rejects.toThrow(/lines" must be a string array/i);
+
+			expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\n");
+		});
+	});
+
+	it("validates direct execute path before resolving mutation target", async () => {
+		const { pi, getTool } = makeFakePiRegistry();
+		registerEditTool(pi);
+		const editTool = getTool("edit");
+
+		await expect(
+			editTool.execute(
+				"e1",
+				{ edits: [{ op: "append", lines: ["x"] }] },
+				undefined,
+				undefined,
+				{ cwd: process.cwd() } as any,
+			),
+		).rejects.toThrow(/requires a non-empty "path" string/i);
 	});
 
 	it("renders details diff while keeping diff out of LLM-visible text", async () => {
