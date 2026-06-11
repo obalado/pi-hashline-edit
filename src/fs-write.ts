@@ -71,8 +71,11 @@ export async function resolveMutationTargetPath(path: string): Promise<string> {
 export async function writeFileAtomically(
 	path: string,
 	content: string,
+	options?: { alreadyResolved?: true },
 ): Promise<void> {
-	const targetPath = await resolveMutationTargetPath(path);
+	const targetPath = options?.alreadyResolved
+		? path
+		: await resolveMutationTargetPath(path);
 
 	let existingStats: Awaited<ReturnType<typeof stat>> | null = null;
 	try {
@@ -84,6 +87,8 @@ export async function writeFileAtomically(
 	}
 
 	if (existingStats && existingStats.nlink > 1) {
+		// Hard-linked files cannot be atomically replaced without breaking inode
+		// sharing, so preserve links by updating existing inode in place.
 		await writeFile(targetPath, content, "utf-8");
 		return;
 	}

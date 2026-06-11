@@ -28,11 +28,9 @@ import { throwIfAborted } from "./runtime";
 import { getFileSnapshot } from "./snapshot";
 import {
 	buildChangedResponse,
-	buildFullResponse,
 	buildNoopResponse,
-	buildRangesResponse,
 	type EditMeta,
-	type ReturnMode,
+	type HashlineEditToolDetails,
 } from "./edit-response";
 import {
 	buildAppliedChangedResultText,
@@ -61,22 +59,6 @@ const hashlineEditLinesSchema = Type.Array(Type.String(), {
 	description:
 		"replacement content, one array entry per line, no LINE#HASH prefix",
 });
-
-const returnRangeSchema = Type.Object(
-	{
-		start: Type.Integer({
-			minimum: 1,
-			description: "first post-edit line to return",
-		}),
-		end: Type.Optional(
-			Type.Integer({
-				minimum: 1,
-				description: "last post-edit line to return",
-			}),
-		),
-	},
-	{ additionalProperties: false },
-);
 
 const hashlineEditItemSchema = Type.Object(
 	{
@@ -112,19 +94,7 @@ const hashlineEditItemSchema = Type.Object(
 export const hashlineEditToolSchema = Type.Object(
 	{
 		path: Type.String({ description: "path" }),
-		returnMode: Type.Optional(
-			stringEnumSchema(["changed", "full", "ranges"] as const, {
-				description: 'response mode: "changed", "full", or "ranges"',
-			}),
-		),
-		returnRanges: Type.Optional(
-			Type.Array(returnRangeSchema, {
-				description: "post-edit line ranges when returnMode is ranges",
-			}),
-		),
-		edits: Type.Optional(
-			Type.Array(hashlineEditItemSchema, { description: "edits over $path" }),
-		),
+		edits: Type.Array(hashlineEditItemSchema, { description: "edits over $path" }),
 		// Native Pi edit dialects (top-level oldText/newText, old_text/new_text,
 		// file_path alias, JSON-string edits) are folded into the canonical `edits`
 		// shape by normalizeEditRequest in the prepareArguments hook, which runs
@@ -135,61 +105,9 @@ export const hashlineEditToolSchema = Type.Object(
 	{ additionalProperties: false },
 );
 
-type ReturnRange = {
-	start: number;
-	end?: number;
-};
-
-type ReturnedRangePreview = {
-	start: number;
-	end: number;
-	text: string;
-	nextOffset?: number;
-	empty?: true;
-};
-
-type FullContentPreview = {
-	text: string;
-	nextOffset?: number;
-};
-
 export type EditRequestParams = {
 	path: string;
-	returnMode?: "changed" | "full" | "ranges";
-	returnRanges?: ReturnRange[];
-	edits?: HashlineToolEdit[];
-};
-
-type EditMetrics = {
-	edits_attempted: number;
-	edits_noop: number;
-	warnings: number;
-	return_mode: "changed" | "full" | "ranges";
-	classification: "applied" | "noop";
-	changed_lines?: { first: number; last: number };
-	added_lines?: number;
-	removed_lines?: number;
-};
-
-export type HashlineEditToolDetails = {
-	diff: string;
-	firstChangedLine?: number;
-	/**
-	 * Post-edit snapshot fingerprint. Surfaced in details only — the LLM no
-	 * longer receives or echoes it. Hosts may use this for UI hints (e.g.
-	 * "file changed since last view"). See plan W2.
-	 */
-	snapshotId?: string;
-	classification?: "noop";
-	nextOffset?: number;
-	fullContent?: FullContentPreview;
-	returnedRanges?: ReturnedRangePreview[];
-	structureOutline?: string[];
-	/**
-	 * Phase 2 C — opt-in observability surface for hosts. Never echoed in text.
-	 * Hosts can use it for adoption/regression dashboards.
-	 */
-	metrics?: EditMetrics;
+	edits: HashlineToolEdit[];
 };
 
 const EDIT_DESC = readFileSync(
@@ -211,7 +129,7 @@ const EDIT_PROMPT_GUIDELINES = readFileSync(
 	.filter((line) => line.startsWith("- "))
 	.map((line) => line.slice(2));
 
-const ROOT_KEYS = new Set(["path", "returnMode", "returnRanges", "edits"]);
+const ROOT_KEYS = new Set(["path", "edits"]);
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -224,7 +142,7 @@ function hasOwn(request: Record<string, unknown>, key: string): boolean {
 // converged any model dialects. Per-edit structural validation is delegated to
 // resolveEditAnchors (src/hashline.ts), which is the single source of truth for
 // edit-item shape + op constraints. This function validates only the root-level
-// request fields: path, returnMode, returnRanges, and that edits is an array.
+// request fields: path and that edits is an array.
 //
 // Intentional overlap with the published TypeBox schema: pi normally runs AJV
 // validation before execute(), but that can be disabled in environments without
@@ -249,66 +167,8 @@ export function assertEditRequest(
 		throw new Error('Edit request requires a non-empty "path" string.');
 	}
 
-	if (hasOwn(request, "edits") && !Array.isArray(request.edits)) {
-		throw new Error('Edit request requires an "edits" array when provided.');
-	}
-
-	if (hasOwn(request, "returnMode")) {
-		if (
-			request.returnMode !== "changed" &&
-			request.returnMode !== "full" &&
-			request.returnMode !== "ranges"
-		) {
-			throw new Error(
-				'Edit request field "returnMode" must be "changed", "full", or "ranges" when provided.',
-			);
-		}
-	}
-
-	if (hasOwn(request, "returnRanges")) {
-		if (
-			!Array.isArray(request.returnRanges) ||
-			request.returnRanges.length === 0
-		) {
-			throw new Error(
-				'Edit request field "returnRanges" must be a non-empty array when provided.',
-			);
-		}
-		for (const [index, range] of request.returnRanges.entries()) {
-			if (!isRecord(range)) {
-				throw new Error(`returnRanges[${index}] must be an object.`);
-			}
-			if (!Number.isInteger(range.start) || (range.start as number) < 1) {
-				throw new Error(
-					`returnRanges[${index}].start must be a positive integer.`,
-				);
-			}
-			if (hasOwn(range, "end")) {
-				if (!Number.isInteger(range.end) || (range.end as number) < 1) {
-					throw new Error(
-						`returnRanges[${index}].end must be a positive integer when provided.`,
-					);
-				}
-				if ((range.end as number) < (range.start as number)) {
-					throw new Error(`returnRanges[${index}].end must be >= start.`);
-				}
-			}
-		}
-	}
-
-	if (request.returnMode === "ranges") {
-		if (
-			!Array.isArray(request.returnRanges) ||
-			request.returnRanges.length === 0
-		) {
-			throw new Error(
-				'Edit request with returnMode "ranges" requires a non-empty "returnRanges" array.',
-			);
-		}
-	} else if (hasOwn(request, "returnRanges")) {
-		throw new Error(
-			'Edit request field "returnRanges" is only supported when returnMode is "ranges".',
-		);
+	if (!Array.isArray(request.edits)) {
+		throw new Error('Edit request requires an "edits" array.');
 	}
 
 	// Per-edit validation lives in resolveEditAnchors — the single source of
@@ -316,19 +176,18 @@ export function assertEditRequest(
 }
 
 /**
- * Shared edit pipeline: normalize, validate, read file, resolve anchors,
- * and apply edits. Both `computeEditPreview` (dry-run) and `execute()`
- * (real) call this; the access mode parameter controls whether the file
- * must be writable.
+ * Shared edit pipeline: read file, resolve anchors, and apply edits. Public
+ * entrypoints normalize + validate before calling this; access mode controls
+ * whether the file must be writable.
  */
 async function executeEditPipeline(
-	request: unknown,
+	params: EditRequestParams,
 	cwd: string,
 	accessMode: number,
 	signal?: AbortSignal,
+	resolvedPath?: string,
 ): Promise<{
 	path: string;
-	toolEdits: HashlineToolEdit[];
 	originalNormalized: string;
 	result: string;
 	bom: string;
@@ -339,15 +198,9 @@ async function executeEditPipeline(
 	firstChangedLine?: number;
 	lastChangedLine?: number;
 }> {
-	const normalized = normalizeEditRequest(request);
-	assertEditRequest(normalized);
-
-	const params = normalized as EditRequestParams;
 	const path = params.path;
-	const absolutePath = resolveToCwd(path, cwd);
-	const toolEdits = Array.isArray(params.edits)
-		? (params.edits as HashlineToolEdit[])
-		: [];
+	const absolutePath = resolvedPath ?? resolveToCwd(path, cwd);
+	const toolEdits = params.edits;
 
 	if (toolEdits.length === 0) {
 		throw new Error("No edits provided.");
@@ -397,7 +250,6 @@ async function executeEditPipeline(
 
 	return {
 		path,
-		toolEdits,
 		originalNormalized,
 		result: anchorResult.content,
 		bom,
@@ -415,8 +267,10 @@ export async function computeEditPreview(
 	cwd: string,
 ): Promise<EditPreview> {
 	try {
+		const normalized = normalizeEditRequest(request);
+		assertEditRequest(normalized);
 		const { path, originalNormalized, result } = await executeEditPipeline(
-			request,
+			normalized,
 			cwd,
 			constants.R_OK,
 		);
@@ -449,24 +303,27 @@ const editToolDefinition: EditToolDefinition = {
 	// Converge model dialects (native oldText/newText, JSON-string edits, missing
 	// op, file_path alias) onto the canonical hashline shape before Pi validates
 	// and before execute(). See src/edit-normalize.ts.
-	prepareArguments: (args: unknown) =>
-		normalizeEditRequest(args) as EditRequestParams,
+	prepareArguments: (args: unknown) => {
+		const normalized = normalizeEditRequest(args);
+		assertEditRequest(normalized);
+		return normalized;
+	},
 	// Force the default tool shell (Box with pending/success/error background) so
 	// we don't inherit renderShell: "self" from the built-in edit tool of the
 	// same name, which would drop the shared background color block.
 	renderShell: "default",
 	renderCall(args, theme, context) {
 		const previewInput = getRenderablePreviewInput(args);
+		const resetPreview = () => {
+			context.state.argsKey = undefined;
+			context.state.preview = undefined;
+			context.state.previewGeneration =
+				(context.state.previewGeneration ?? 0) + 1;
+		};
 		if (context.executionStarted) {
-			context.state.argsKey = undefined;
-			context.state.preview = undefined;
-			context.state.previewGeneration =
-				(context.state.previewGeneration ?? 0) + 1;
+			resetPreview();
 		} else if (!context.argsComplete || !previewInput) {
-			context.state.argsKey = undefined;
-			context.state.preview = undefined;
-			context.state.previewGeneration =
-				(context.state.previewGeneration ?? 0) + 1;
+			resetPreview();
 		} else {
 			const argsKey = JSON.stringify(previewInput);
 			if (context.state.argsKey !== argsKey) {
@@ -501,7 +358,7 @@ const editToolDefinition: EditToolDefinition = {
 			(context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
 		text.setText(
 			formatEditCall(
-				getRenderablePreviewInput(args) ?? undefined,
+				previewInput ?? undefined,
 				context.state as EditRenderState,
 				context.expanded,
 				theme,
@@ -578,12 +435,9 @@ const editToolDefinition: EditToolDefinition = {
 		// prepareArguments having run. Idempotent on canonical input.
 		const normalized = normalizeEditRequest(params);
 		assertEditRequest(normalized);
-		const normalizedParams = normalized as EditRequestParams;
+		const normalizedParams = normalized;
 		const path = normalizedParams.path;
 		const absolutePath = resolveToCwd(path, ctx.cwd);
-		const returnMode = normalizedParams.returnMode ?? "changed";
-		const requestedReturnRanges = normalizedParams.returnRanges;
-
 		const mutationTargetPath = await resolveMutationTargetPath(absolutePath);
 		return withFileMutationQueue(mutationTargetPath, async () => {
 			throwIfAborted(signal);
@@ -599,24 +453,22 @@ const editToolDefinition: EditToolDefinition = {
 				firstChangedLine,
 				lastChangedLine,
 			} = await executeEditPipeline(
-				normalized,
+				normalizedParams,
 				ctx.cwd,
 				constants.R_OK | constants.W_OK,
 				signal,
+				mutationTargetPath,
 			);
 
-			const editsAttempted = Array.isArray(normalizedParams.edits)
-				? normalizedParams.edits.length
-				: 0;
+			const editsAttempted = normalizedParams.edits.length;
 
 			if (originalNormalized === result) {
-				const noopSnapshotId = (await getFileSnapshot(absolutePath)).snapshotId;
+				const noopSnapshotId = (
+					await getFileSnapshot(mutationTargetPath, { alreadyResolved: true })
+				).snapshotId;
 				return buildNoopResponse({
 					path,
-					returnMode: returnMode as ReturnMode,
-					requestedReturnRanges,
 					noopEdits,
-					originalNormalized,
 					snapshotId: noopSnapshotId,
 					editMeta: {
 						editsAttempted,
@@ -634,11 +486,13 @@ const editToolDefinition: EditToolDefinition = {
 
 			throwIfAborted(signal);
 			await writeFileAtomically(
-				absolutePath,
+				mutationTargetPath,
 				bom + restoreLineEndings(result, originalEnding),
+				{ alreadyResolved: true },
 			);
-			const updatedSnapshotId = (await getFileSnapshot(absolutePath))
-				.snapshotId;
+			const updatedSnapshotId = (
+				await getFileSnapshot(mutationTargetPath, { alreadyResolved: true })
+			).snapshotId;
 
 			const editMeta: EditMeta = {
 				editsAttempted,
@@ -648,9 +502,6 @@ const editToolDefinition: EditToolDefinition = {
 			};
 
 			const successInput = {
-				path,
-				returnMode: returnMode as ReturnMode,
-				requestedReturnRanges,
 				originalNormalized,
 				result,
 				warnings,
@@ -658,8 +509,6 @@ const editToolDefinition: EditToolDefinition = {
 				editMeta,
 			};
 
-			if (returnMode === "full") return buildFullResponse(successInput);
-			if (returnMode === "ranges") return buildRangesResponse(successInput);
 			return buildChangedResponse(successInput);
 		});
 	},

@@ -277,14 +277,8 @@ function assertNoDisplayPrefixes(lines: string[]): void {
  * explicitly provided blank lines remain intact. Display prefixes are
  * rejected by `assertNoDisplayPrefixes`, never silently stripped.
  */
-export function hashlineParseText(edit: string[] | string | null): string[] {
-	if (edit === null) return [];
-	const lines =
-		typeof edit === "string"
-			? (edit.endsWith("\n") ? edit.slice(0, -1) : edit)
-					.replaceAll("\r", "")
-					.split("\n")
-			: edit;
+function hashlineParseText(edit: string[] | undefined): string[] {
+	const lines = edit ?? [];
 	assertNoDisplayPrefixes(lines);
 	return lines;
 }
@@ -294,8 +288,8 @@ export function hashlineParseText(edit: string[] | string | null): string[] {
  *
  * This is the single source of truth for per-edit structural validation (shape,
  * op constraints, field types) and anchor parsing. `assertEditRequest` validates
- * only the request envelope (path, returnMode, etc.) and delegates here for
- * edit payload validation.
+ * only the request envelope (path plus edits array presence) and delegates here
+ * for edit payload validation.
  *
  * Strict: provided anchors must parse successfully. Missing anchors are
  * fine for append (→ EOF) and prepend (→ BOF), but a malformed anchor
@@ -412,7 +406,7 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
 					op: "replace",
 					pos: parseAnchorRef(edit.pos!),
 					...(edit.end ? { end: parseAnchorRef(edit.end) } : {}),
-					lines: hashlineParseText(edit.lines ?? null),
+					lines: hashlineParseText(edit.lines),
 				});
 				break;
 			}
@@ -420,7 +414,7 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
 				result.push({
 					op: "append",
 					...(edit.pos ? { pos: parseAnchorRef(edit.pos) } : {}),
-					lines: hashlineParseText(edit.lines ?? null),
+					lines: hashlineParseText(edit.lines),
 				});
 				break;
 			}
@@ -428,7 +422,7 @@ export function resolveEditAnchors(edits: HashlineToolEdit[]): HashlineEdit[] {
 				result.push({
 					op: "prepend",
 					...(edit.pos ? { pos: parseAnchorRef(edit.pos) } : {}),
-					lines: hashlineParseText(edit.lines ?? null),
+					lines: hashlineParseText(edit.lines),
 				});
 				break;
 			}
@@ -568,7 +562,7 @@ function buildLineIndex(content: string): LineIndex {
 function assertDoesNotEmptyFile(originalContent: string, result: string): void {
 	if (originalContent.length > 0 && result.length === 0) {
 		throw new Error(
-			"[E_WOULD_EMPTY] Refusing to empty a non-empty file through edit. If intentional, use a manual destructive operation outside the edit API.",
+			"[E_WOULD_EMPTY] Refusing to empty a non-empty file through edit. If intentional, use the write tool or bash.",
 		);
 	}
 }
@@ -605,36 +599,6 @@ function throwEditConflict(
 	throw new Error(
 		`[E_EDIT_CONFLICT] Conflicting edits in a single request: edit ${left.index} (${left.label}) and edit ${right.index} (${right.label}) ${reason}. Merge them into one non-overlapping change or split the request.`,
 	);
-}
-
-function cloneHashlineEdit(edit: HashlineEdit): HashlineEdit {
-	switch (edit.op) {
-		case "replace":
-			return {
-				op: "replace",
-				pos: { ...edit.pos },
-				...(edit.end ? { end: { ...edit.end } } : {}),
-				lines: [...edit.lines],
-			};
-		case "append":
-			return {
-				op: "append",
-				...(edit.pos ? { pos: { ...edit.pos } } : {}),
-				lines: [...edit.lines],
-			};
-		case "prepend":
-			return {
-				op: "prepend",
-				...(edit.pos ? { pos: { ...edit.pos } } : {}),
-				lines: [...edit.lines],
-			};
-		case "replace_text":
-			return {
-				op: "replace_text",
-				oldText: edit.oldText,
-				newText: edit.newText,
-			};
-	}
 }
 
 function computeInsertionBoundary(
@@ -1154,7 +1118,7 @@ export function applyHashlineEdits(
 	if (!edits.length)
 		return { content, firstChangedLine: undefined, lastChangedLine: undefined };
 
-	const workingEdits = edits.map(cloneHashlineEdit);
+	const workingEdits = edits;
 	const lineIndex = buildLineIndex(content);
 	const noopEdits: NoopEdit[] = [];
 	const warnings: string[] = [];

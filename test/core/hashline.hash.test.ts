@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyHashlineEdits, computeLineHash, hashlineParseText } from "../../src/hashline";
+import { applyHashlineEdits, computeLineHash, resolveEditAnchors } from "../../src/hashline";
 
 describe("computeLineHash", () => {
   it("returns a 2-character string from NIBBLE_STR alphabet", () => {
@@ -41,7 +41,8 @@ describe("strict hashline contract", () => {
   });
 
   it("preserves explicit blank trailing line in array input", () => {
-    expect(hashlineParseText(["alpha", ""])).toEqual(["alpha", ""]);
+    const [resolved] = resolveEditAnchors([{ op: "append", lines: ["alpha", ""] }]);
+    expect(resolved).toMatchObject({ op: "append", lines: ["alpha", ""] });
   });
 
   it("rejects stale anchors instead of relocating by hash", () => {

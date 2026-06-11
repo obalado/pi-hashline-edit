@@ -47,7 +47,7 @@ export function generateDiffString(
   oldContent: string,
   newContent: string,
   contextLines = 4,
-): { diff: string; firstChangedLine: number | undefined } {
+): { diff: string } {
   const parts = Diff.diffLines(oldContent, newContent);
   const output: string[] = [];
   const maxLineNum = Math.max(
@@ -58,7 +58,6 @@ export function generateDiffString(
   let oldLineNum = 1;
   let newLineNum = 1;
   let lastWasChange = false;
-  let firstChangedLine: number | undefined;
 
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i]!;
@@ -66,7 +65,6 @@ export function generateDiffString(
     if (raw[raw.length - 1] === "") raw.pop();
 
     if (part.added || part.removed) {
-      if (firstChangedLine === undefined) firstChangedLine = newLineNum;
       for (const line of raw) {
         if (part.added) {
           output.push(
@@ -124,5 +122,5 @@ export function generateDiffString(
     lastWasChange = false;
   }
 
-  return { diff: output.join("\n"), firstChangedLine };
+  return { diff: output.join("\n") };
 }

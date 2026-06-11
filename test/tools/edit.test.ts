@@ -31,26 +31,24 @@ describe("assertEditRequest", () => {
 	// Per-edit structural validation now lives in resolveEditAnchors
 	// (hashline.ts). assertEditRequest validates only the request envelope.
 
-	it("requires returnRanges when returnMode is ranges", () => {
+	it("rejects returnMode and returnRanges after return payload modes were deleted", () => {
 		expect(() =>
 			assertEditRequest({
 				path: "a.ts",
-				returnMode: "ranges",
+				returnMode: "full",
 				edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
 			} as any),
-		).toThrow(/returnRanges/i);
-	});
+		).toThrow(/unknown or unsupported fields/i);
 
-	it("rejects returnRanges outside ranges returnMode", () => {
 		expect(() =>
 			assertEditRequest({
 				path: "a.ts",
-				returnMode: "changed",
 				returnRanges: [{ start: 1, end: 2 }],
 				edits: [{ op: "replace", pos: "1#ZZ", lines: ["x"] }],
 			} as any),
-		).toThrow(/returnRanges/i);
+		).toThrow(/unknown or unsupported fields/i);
 	});
+
 });
 
 describe("registerEditTool", () => {
@@ -82,6 +80,8 @@ describe("registerEditTool", () => {
 		expect(props.newText).toBeUndefined();
 		expect(props.old_text).toBeUndefined();
 		expect(props.new_text).toBeUndefined();
+		expect(props.returnMode).toBeUndefined();
+		expect(props.returnRanges).toBeUndefined();
 	});
 
 	it("publishes a top-level object schema for pi tool registration", () => {

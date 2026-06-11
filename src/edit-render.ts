@@ -7,7 +7,8 @@
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { normalizeEditRequest } from "./edit-normalize";
-import type { EditRequestParams, HashlineEditToolDetails } from "./edit";
+import type { EditRequestParams } from "./edit";
+import type { HashlineEditToolDetails } from "./edit-response";
 
 // ─── Theme type aliases ─────────────────────────────────────────────────
 
@@ -43,16 +44,18 @@ export function getRenderablePreviewInput(
 	} catch {
 		return null;
 	}
-	if (!isRecord(normalized) || typeof normalized.path !== "string") {
+	if (
+		!isRecord(normalized) ||
+		typeof normalized.path !== "string" ||
+		!Array.isArray(normalized.edits)
+	) {
 		return null;
 	}
 
-	const request: EditRequestParams = { path: normalized.path };
-	if (Array.isArray(normalized.edits)) {
-		request.edits = normalized.edits as any;
-	}
-
-	return request.edits !== undefined ? request : null;
+	return {
+		path: normalized.path,
+		edits: normalized.edits,
+	} as EditRequestParams;
 }
 
 // ─── Diff formatting ────────────────────────────────────────────────────
@@ -132,24 +135,12 @@ export function getRenderedEditTextContent(result: {
 	return textContent?.text;
 }
 
-export function extractRenderedWarnings(
-	text: string | undefined,
-): string | undefined {
-	return text?.match(/(?:^|\n)Warnings:\n[\s\S]*$/)?.[0]?.trimStart();
-}
-
 // ─── Result classification ──────────────────────────────────────────────
 
 export function isAppliedChangedResult(
 	details: HashlineEditToolDetails | undefined,
 ): boolean {
-	const metrics = details?.metrics;
-	return (
-		metrics?.classification === "applied" &&
-		metrics.return_mode === "changed" &&
-		metrics.added_lines !== undefined &&
-		metrics.removed_lines !== undefined
-	);
+	return details?.classification === "applied";
 }
 
 export function buildAppliedChangedResultText(
@@ -166,8 +157,9 @@ export function buildAppliedChangedResultText(
 		sections.push(formatResultDiff(details.diff, theme));
 	}
 
-	const warnings = extractRenderedWarnings(text);
-	if (warnings) sections.push(warnings);
+	if (details?.warnings.length) {
+		sections.push(["Warnings:", ...details.warnings].join("\n"));
+	}
 
 	return sections.length > 0 ? sections.join("\n\n") : undefined;
 }
@@ -189,12 +181,7 @@ function trimEdgeEmptyLines(lines: string[]): string[] {
 }
 
 function isRenderedEditSectionBoundary(line: string): boolean {
-	return (
-		line.startsWith("--- Anchors ") ||
-		line === "Warnings:" ||
-		line === "Structure outline:" ||
-		/^--- Range \d+ /.test(line)
-	);
+	return line.startsWith("--- Anchors ") || line === "Warnings:";
 }
 
 export function formatRenderedEditResultMarkdown(text: string): string {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hashlineParseText, resolveEditAnchors } from "../../src/hashline";
+import { resolveEditAnchors } from "../../src/hashline";
 
 // Anchor parsing is exercised through resolveEditAnchors — the same seam the
 // edit tool crosses — instead of a test-only parsing export.
@@ -58,58 +58,40 @@ describe("anchor reference parsing", () => {
   });
 });
 
-describe("hashlineParseText", () => {
-  it("returns [] for null", () => {
-    expect(hashlineParseText(null)).toEqual([]);
-  });
-
-  it("splits string on newline", () => {
-    expect(hashlineParseText("a\nb")).toEqual(["a", "b"]);
-  });
-
-  it("removes trailing blank line from string input", () => {
-    expect(hashlineParseText("a\nb\n")).toEqual(["a", "b"]);
-  });
-
-  it("preserves a trailing whitespace-only content line in string input", () => {
-    expect(hashlineParseText("a\nb\n  ")).toEqual(["a", "b", "  "]);
-  });
+describe("replacement lines validation", () => {
+  function parseLines(lines: string[]): string[] {
+    const [resolved] = resolveEditAnchors([{ op: "append", lines }]);
+    if (resolved?.op !== "append") {
+      throw new Error("expected resolved append edit");
+    }
+    return resolved.lines;
+  }
 
   it("passes through array input verbatim", () => {
-    const input = ["a", "b"];
-    expect(hashlineParseText(input)).toEqual(["a", "b"]);
+    expect(parseLines(["a", "b"])).toEqual(["a", "b"]);
   });
 
   it("preserves '# Note:' comment lines (no autocorrection)", () => {
-    expect(hashlineParseText(["# Note: important"])).toEqual(["# Note: important"]);
+    expect(parseLines(["# Note: important"])).toEqual(["# Note: important"]);
   });
 
   it("preserves literal '+' prefixed content (no autocorrection)", () => {
-    expect(hashlineParseText(["+added"])).toEqual(["+added"]);
-  });
-
-  it("returns empty string as a single empty line for blank content", () => {
-    expect(hashlineParseText("")).toEqual([""]);
+    expect(parseLines(["+added"])).toEqual(["+added"]);
   });
 
   it("rejects array input that contains LINE#HASH: prefixes", () => {
-    expect(() => hashlineParseText(["1#ZZ:foo", "2#MQ:bar"])).toThrow(/^\[E_INVALID_PATCH\]/);
+    expect(() => parseLines(["1#ZZ:foo", "2#MQ:bar"])).toThrow(/^\[E_INVALID_PATCH\]/);
   });
 
   it("rejects diff-preview hunks with + and context hash prefixes", () => {
     expect(() =>
-      hashlineParseText([" 9#MQ:keep", "+10#VR:new", " 11#WS:after"]),
+      parseLines([" 9#MQ:keep", "+10#VR:new", " 11#WS:after"]),
     ).toThrow(/^\[E_INVALID_PATCH\]/);
   });
 
   it("rejects diff-preview deletion rows", () => {
     expect(() =>
-      hashlineParseText([" 9#MQ:keep", "-10    old", " 11#WS:after"]),
+      parseLines([" 9#MQ:keep", "-10    old", " 11#WS:after"]),
     ).toThrow(/^\[E_INVALID_PATCH\]/);
-  });
-
-  it("rejects string-form rendered diff hunks", () => {
-    const input = " 9#MQ:keep\n-10    old\n+10#VR:new\n 11#WS:after";
-    expect(() => hashlineParseText(input)).toThrow(/^\[E_INVALID_PATCH\]/);
   });
 });

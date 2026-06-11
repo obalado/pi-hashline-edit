@@ -9,7 +9,7 @@
  * and burning a turn, we converge every known dialect here, in one place, so the
  * rest of the pipeline only ever sees the canonical form:
  *
- *   { path, edits: [{ op, ... }], returnMode?, returnRanges? }
+ *   { path, edits: [{ op, ... }] }
  *
  * This runs as the tool's `prepareArguments` hook, which Pi executes before AJV
  * schema validation and before `execute()`. The output is plain enumerable data
