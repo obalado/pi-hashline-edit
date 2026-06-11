@@ -202,6 +202,15 @@ const EDIT_PROMPT_SNIPPET = readFileSync(
 	"utf-8",
 ).trim();
 
+const EDIT_PROMPT_GUIDELINES = readFileSync(
+	new URL("../prompts/edit-guidelines.md", import.meta.url),
+	"utf-8",
+)
+	.split("\n")
+	.map((line) => line.trim())
+	.filter((line) => line.startsWith("- "))
+	.map((line) => line.slice(2));
+
 const ROOT_KEYS = new Set(["path", "returnMode", "returnRanges", "edits"]);
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -436,6 +445,7 @@ const editToolDefinition: EditToolDefinition = {
 	description: EDIT_DESC,
 	parameters: hashlineEditToolSchema,
 	promptSnippet: EDIT_PROMPT_SNIPPET,
+	promptGuidelines: EDIT_PROMPT_GUIDELINES,
 	// Converge model dialects (native oldText/newText, JSON-string edits, missing
 	// op, file_path alias) onto the canonical hashline shape before Pi validates
 	// and before execute(). See src/edit-normalize.ts.

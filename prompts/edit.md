@@ -1,22 +1,18 @@
-Patch a text file using `LINE#HASH` anchors copied verbatim from `read`.
+Patch a text file at `LINE#HASH` anchors copied verbatim from the latest `read` of that file.
 
-Submit one `edit` call per file. All operations for that file go in a single `edits` array; every edit must set `op`; anchors within one call must all come from the same pre-edit read.
+Batch every change to a file into one `edit` call: all operations go in the `edits` array, every edit sets `op`, and all anchors must come from the same pre-edit read. Edits validate against one snapshot and apply together, so line numbers never shift between entries of the same call.
 
 Ops:
-- `replace` — replace the line at `pos`. Add `end` to replace the inclusive range `pos`..`end`. Without `end`, only the single line at `pos` is replaced — even if `lines` has many entries.
-- `append` — insert `lines` after `pos`; omit `pos` to append at EOF.
-- `prepend` — insert `lines` before `pos`; omit `pos` to insert at BOF.
-- `replace_text` — one edit item `{ "op": "replace_text", "oldText": ..., "newText": ... }` replacing the one exact unique occurrence. Only when a match is guaranteed unique; otherwise read first and use anchors. `oldText`/`newText` are only valid with `op` set to `replace_text`.
+- `replace` — replace the single line at `pos`, or the inclusive span `pos`..`end`. `lines` is the complete new content for the whole span; `lines: []` deletes it. Without `end`, exactly one line is replaced no matter how many entries `lines` has.
+- `append` — insert `lines` after `pos`; omit `pos` to append at end of file.
+- `prepend` — insert `lines` before `pos`; omit `pos` to insert at start of file.
+- `replace_text` — `{ "op": "replace_text", "oldText": ..., "newText": ... }` replaces one exact, unique occurrence and fails otherwise. Prefer anchors; use this only when uniqueness is certain. `oldText`/`newText` are invalid on any other op.
 
-Examples:
+Example — single-line and span replace in one call:
 ```json
 { "path": "src/main.ts", "edits": [
-  { "op": "replace", "pos": "12#MQ", "lines": ["const x = 1;"] }
-] }
-```
-```json
-{ "path": "src/main.ts", "edits": [
-  { "op": "replace", "pos": "5#AB", "end": "8#QV", "lines": [
+  { "op": "replace", "pos": "12#MQ", "lines": ["const x = 1;"] },
+  { "op": "replace", "pos": "5#VR", "end": "8#QV", "lines": [
     "function greet(name) {",
     "  return `Hello, ${name}`;",
     "}"
@@ -25,12 +21,8 @@ Examples:
 ```
 
 Rules:
-- Anchors define the span being replaced; `lines` is the complete new content for that whole span. To replace more than one line, set `end` — do not rely on a single `pos`.
-- Do not copy boundary content into `lines`. The text after `:` in an anchor is for your reference only; including a neighboring line's content in `lines` duplicates that line.
-- `lines` is literal file content: no `LINE#HASH:` prefix, no bare `HH:` hash, no leading `+`/`-`. The anchor goes in `pos`/`end` only — never copy a hash you saw in `read` output into `lines`. Match indentation exactly.
-- Do not guess, shift, or construct anchors. Copy them from the most recent `read` of this file.
-- Do not emit overlapping or adjacent edits — merge them into one.
+- `lines` is literal file content with exact indentation. Never include `LINE#HASH:` or bare `HH:` prefixes, diff `+`/`-` markers, or a copy of a neighboring line — the `:content` part of an anchor is context for you, not payload, and repeating a boundary line duplicates it in the file.
+- Anchors are opaque: copy them exactly, never compute, shift, or guess one.
+- Edits in one call must not overlap or touch adjacent lines — merge such changes into a single edit.
 
-On success (`changed` mode, default) the returned text is an `--- Anchors A-B ---` block with fresh `LINE#HASH` lines for the changed region. Use those for nearby follow-up edits in the same file without re-reading. For distant follow-ups, or on any error, call `read` again. `full` and `ranges` modes place previews in `details` for the host; the model still only needs what's in the text.
-
-Errors come back as text starting with a bracketed code (e.g. `[E_STALE_ANCHOR]`, `[E_INVALID_PATCH]`, `[E_NO_MATCH]`). The message is self-describing and tells you what to retry; stale-anchor errors include the current `>>> LINE#HASH:` lines, ready to copy.
+On success the result is an `--- Anchors A-B ---` block with fresh `LINE#HASH` lines for the changed region: use them directly for nearby follow-up edits, `read` again for distant ones. Errors start with a bracketed code (`[E_STALE_ANCHOR]`, `[E_INVALID_PATCH]`, …) and say how to retry; stale-anchor errors include the current `>>> LINE#HASH:content` lines, ready to copy.
