@@ -40,13 +40,18 @@
   },
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "knip": "knip --production",
+    "check": "npm run typecheck && npm run knip && npm test"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.74.0",
     "@types/node": "^22.0.0",
     "@types/xxhashjs": "^0.2.4",
     "ajv": "^8.20.0",
+    "knip": "^6.16.1",
+    "typescript": "^6.0.3",
     "vitest": "^3.0.0"
   }
 }
