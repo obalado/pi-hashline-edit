@@ -6,7 +6,6 @@ import { withTempFile } from "../support/fixtures";
 
 vi.mock("../../src/file-kind", () => ({
   loadFileKindAndText: vi.fn(),
-  classifyFileKind: vi.fn(),
 }));
 
 import * as fileKindMod from "../../src/file-kind";
@@ -14,7 +13,6 @@ import * as fileKindMod from "../../src/file-kind";
 describe("computeEditPreview", () => {
   beforeEach(() => {
     vi.mocked(fileKindMod.loadFileKindAndText).mockReset();
-    vi.mocked(fileKindMod.classifyFileKind).mockReset();
   });
 
   it("returns a diff for strict hashline edits before execution", async () => {
@@ -107,12 +105,9 @@ describe("computeEditPreview", () => {
     });
   });
 
-  it("uses the shared text loader for preview instead of classifying then re-reading text", async () => {
+  it("previews text through the shared text loader", async () => {
     await withTempFile("sample.txt", "ignored\n", async ({ cwd }) => {
       vi.mocked(fileKindMod.loadFileKindAndText).mockResolvedValue({ kind: "text", text: "aaa\nbbb\nccc\n" });
-      vi.mocked(fileKindMod.classifyFileKind).mockRejectedValue(
-        new Error("preview should not call classifyFileKind on text paths"),
-      );
 
       const betaRef = `2#${computeLineHash(2, "bbb")}:bbb`;
       const preview = await computeEditPreview(
@@ -128,7 +123,6 @@ describe("computeEditPreview", () => {
         return;
       }
       expect(preview.diff).toContain(":BBB");
-      expect(vi.mocked(fileKindMod.classifyFileKind)).not.toHaveBeenCalled();
     });
   });
 

@@ -11,7 +11,7 @@ import {
 } from "fs/promises";
 import { join } from "path";
 import register from "../../index";
-import { classifyFileKind, loadFileKindAndText } from "../../src/file-kind";
+import { loadFileKindAndText } from "../../src/file-kind";
 import { makeFakePiRegistry, withTempFile } from "../support/fixtures";
 
 async function createTempRoot(): Promise<string> {
@@ -53,10 +53,10 @@ function getText(result: { content: Array<{ text?: string }> }): string {
 	return result.content[0]?.text ?? "";
 }
 
-describe("classifyFileKind", () => {
+describe("loadFileKindAndText classification", () => {
 	it("classifies directories explicitly", async () => {
 		await withTempDirectory("nested", async ({ path }) => {
-			await expect(classifyFileKind(path)).resolves.toEqual({
+			await expect(loadFileKindAndText(path)).resolves.toEqual({
 				kind: "directory",
 			});
 		});
@@ -65,7 +65,7 @@ describe("classifyFileKind", () => {
 	it("classifies supported images separately from text", async () => {
 		const imagePath = join(process.cwd(), "assets", "banner.jpeg");
 
-		await expect(classifyFileKind(imagePath)).resolves.toMatchObject({
+		await expect(loadFileKindAndText(imagePath)).resolves.toMatchObject({
 			kind: "image",
 			mimeType: "image/jpeg",
 		});
@@ -73,7 +73,7 @@ describe("classifyFileKind", () => {
 
 	it("classifies plain utf-8 text as text", async () => {
 		await withTempFile("sample.txt", "alpha\nbeta\n", async ({ path }) => {
-			await expect(classifyFileKind(path)).resolves.toEqual({ kind: "text" });
+			await expect(loadFileKindAndText(path)).resolves.toMatchObject({ kind: "text" });
 		});
 	});
 
@@ -82,7 +82,7 @@ describe("classifyFileKind", () => {
 			"layout.xml",
 			'<?xml version="1.0" encoding="utf-8"?>\n<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" />\n',
 			async ({ path }) => {
-				await expect(classifyFileKind(path)).resolves.toEqual({ kind: "text" });
+				await expect(loadFileKindAndText(path)).resolves.toMatchObject({ kind: "text" });
 			},
 		);
 	});
@@ -93,7 +93,7 @@ describe("classifyFileKind", () => {
 		const utf16Xml = Buffer.concat([utf16LeBom, Buffer.from(xml, "utf16le")]);
 
 		await withTempBytes("layout-utf16.xml", utf16Xml, async ({ path }) => {
-			await expect(classifyFileKind(path)).resolves.toEqual({
+			await expect(loadFileKindAndText(path)).resolves.toEqual({
 				kind: "binary",
 				description: "null bytes detected",
 			});
@@ -105,7 +105,7 @@ describe("classifyFileKind", () => {
 			"captions.vtt",
 			"WEBVTT\n\n00:00.000 --> 00:01.000\nhello\n",
 			async ({ path }) => {
-				await expect(classifyFileKind(path)).resolves.toEqual({ kind: "text" });
+				await expect(loadFileKindAndText(path)).resolves.toMatchObject({ kind: "text" });
 			},
 		);
 	});
@@ -115,7 +115,7 @@ describe("classifyFileKind", () => {
 			"sample.rtf",
 			"{\\rtf1\\ansi hello}\n",
 			async ({ path }) => {
-				await expect(classifyFileKind(path)).resolves.toEqual({ kind: "text" });
+				await expect(loadFileKindAndText(path)).resolves.toMatchObject({ kind: "text" });
 			},
 		);
 	});
@@ -130,7 +130,7 @@ describe("classifyFileKind", () => {
 		bytes.set(suffix, prefix.length + emDash.length);
 
 		await withTempBytes("sample.md", bytes, async ({ path }) => {
-			await expect(classifyFileKind(path)).resolves.toEqual({ kind: "text" });
+			await expect(loadFileKindAndText(path)).resolves.toMatchObject({ kind: "text" });
 		});
 	});
 
@@ -139,7 +139,7 @@ describe("classifyFileKind", () => {
 			"sample.bin",
 			new Uint8Array([0x61, 0x00, 0x62, 0x63]),
 			async ({ path }) => {
-				await expect(classifyFileKind(path)).resolves.toEqual({
+				await expect(loadFileKindAndText(path)).resolves.toEqual({
 					kind: "binary",
 					description: "null bytes detected",
 				});
@@ -152,7 +152,7 @@ describe("classifyFileKind", () => {
 			"sample.c",
 			new Uint8Array([0xc3, 0x28]),
 			async ({ path }) => {
-				await expect(classifyFileKind(path)).resolves.toEqual({ kind: "text" });
+				await expect(loadFileKindAndText(path)).resolves.toMatchObject({ kind: "text" });
 			},
 		);
 	});
@@ -192,7 +192,7 @@ describe("classifyFileKind", () => {
 		bytes.set(suffix, prefix.length + invalid.length);
 
 		await withTempBytes("late-invalid.c", bytes, async ({ path }) => {
-			await expect(classifyFileKind(path)).resolves.toEqual({ kind: "text" });
+			await expect(loadFileKindAndText(path)).resolves.toMatchObject({ kind: "text" });
 		});
 	});
 
@@ -223,7 +223,7 @@ describe("classifyFileKind", () => {
 			return;
 		}
 
-		const result = await classifyFileKind("/dev/zero");
+		const result = await loadFileKindAndText("/dev/zero");
 		expect(result).toEqual({
 			kind: "binary",
 			description: "unsupported file type",
@@ -248,7 +248,7 @@ describe("classifyFileKind", () => {
 				});
 			});
 
-			const result = await classifyFileKind(pipePath);
+			const result = await loadFileKindAndText(pipePath);
 			expect(result).toEqual({
 				kind: "binary",
 				description: "unsupported file type",

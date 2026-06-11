@@ -7,7 +7,6 @@ import { makeFakePiRegistry, withTempFile } from "../support/fixtures";
 
 vi.mock("../../src/file-kind", () => ({
 	loadFileKindAndText: vi.fn(),
-	classifyFileKind: vi.fn(),
 }));
 
 import * as fileKindMod from "../../src/file-kind";
@@ -129,7 +128,6 @@ describe("formatHashlineRegion", () => {
 describe("read tool protocol", () => {
 	beforeEach(() => {
 		vi.mocked(fileKindMod.loadFileKindAndText).mockReset();
-		vi.mocked(fileKindMod.classifyFileKind).mockReset();
 	});
 
 	it("returns the empty-file advisory through the registered tool", async () => {
@@ -182,15 +180,12 @@ describe("read tool protocol", () => {
 		});
 	});
 
-	it("uses the shared text loader instead of classifying then re-reading text files", async () => {
+	it("reads text through the shared text loader", async () => {
 		await withTempFile("sample.txt", "ignored\n", async ({ cwd }) => {
 			vi.mocked(fileKindMod.loadFileKindAndText).mockResolvedValue({
 				kind: "text",
 				text: "alpha\nbeta\n",
 			});
-			vi.mocked(fileKindMod.classifyFileKind).mockRejectedValue(
-				new Error("read tool should not call classifyFileKind on text paths"),
-			);
 
 			const { pi, getTool } = makeFakePiRegistry();
 			register(pi);
@@ -206,7 +201,6 @@ describe("read tool protocol", () => {
 
 			expect(result.content[0].text).toContain(":alpha");
 			expect(result.content[0].text).toContain(":beta");
-			expect(vi.mocked(fileKindMod.classifyFileKind)).not.toHaveBeenCalled();
 		});
 	});
 

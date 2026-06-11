@@ -1,53 +1,60 @@
 import { describe, expect, it } from "vitest";
-import { hashlineParseText, parseLineRef } from "../../src/hashline";
+import { hashlineParseText, resolveEditAnchors } from "../../src/hashline";
 
-describe("parseLineRef", () => {
+// Anchor parsing is exercised through resolveEditAnchors — the same seam the
+// edit tool crosses — instead of a test-only parsing export.
+function parseRef(ref: string): { line: number; hash: string } {
+  const [resolved] = resolveEditAnchors([{ op: "append", pos: ref, lines: [] }]);
+  if (resolved?.op !== "append" || !resolved.pos) {
+    throw new Error("expected resolved append edit with a pos anchor");
+  }
+  return { line: resolved.pos.line, hash: resolved.pos.hash };
+}
+
+describe("anchor reference parsing", () => {
   it("parses standard LINE#HASH format", () => {
-    const ref = parseLineRef("5#MQ");
-    expect(ref).toEqual({ line: 5, hash: "MQ" });
+    expect(parseRef("5#MQ")).toEqual({ line: 5, hash: "MQ" });
   });
 
   it("parses with trailing content", () => {
-    const ref = parseLineRef("10#ZP:  const x = 1;");
-    expect(ref).toEqual({ line: 10, hash: "ZP" });
+    expect(parseRef("10#ZP:  const x = 1;")).toEqual({ line: 10, hash: "ZP" });
   });
 
   it("tolerates leading >>> markers", () => {
-    const ref = parseLineRef(">>> 5#MQ:content");
-    expect(ref).toEqual({ line: 5, hash: "MQ" });
+    expect(parseRef(">>> 5#MQ:content")).toEqual({ line: 5, hash: "MQ" });
   });
 
   it("tolerates leading +/- diff markers", () => {
-    expect(parseLineRef("+5#MQ")).toEqual({ line: 5, hash: "MQ" });
-    expect(parseLineRef("-5#MQ")).toEqual({ line: 5, hash: "MQ" });
+    expect(parseRef("+5#MQ")).toEqual({ line: 5, hash: "MQ" });
+    expect(parseRef("-5#MQ")).toEqual({ line: 5, hash: "MQ" });
   });
 
   it("throws on invalid format", () => {
-    expect(() => parseLineRef("invalid")).toThrow(/Invalid line reference/);
+    expect(() => parseRef("invalid")).toThrow(/Invalid line reference/);
   });
 
   it("diagnoses missing hash", () => {
-    expect(() => parseLineRef("12")).toThrow(/missing hash/i);
+    expect(() => parseRef("12")).toThrow(/missing hash/i);
   });
 
   it("diagnoses wrong separator", () => {
-    expect(() => parseLineRef("5:AB")).toThrow(/wrong separator/i);
+    expect(() => parseRef("5:AB")).toThrow(/wrong separator/i);
   });
 
   it("diagnoses invalid hash alphabet", () => {
-    expect(() => parseLineRef("12#ab")).toThrow(/alphabet ZPMQVRWSNKTXJBYH only/i);
+    expect(() => parseRef("12#ab")).toThrow(/alphabet ZPMQVRWSNKTXJBYH only/i);
   });
 
   it("diagnoses invalid hash length", () => {
-    expect(() => parseLineRef("12#ABC")).toThrow(/hash must be exactly 2 characters/i);
+    expect(() => parseRef("12#ABC")).toThrow(/hash must be exactly 2 characters/i);
   });
 
   it("throws on line 0", () => {
-    expect(() => parseLineRef("0#MQ")).toThrow(/must be >= 1/);
+    expect(() => parseRef("0#MQ")).toThrow(/must be >= 1/);
   });
 
   it("prefixes structured errors with [E_BAD_REF]", () => {
-    expect(() => parseLineRef("invalid")).toThrow(/^\[E_BAD_REF\]/);
+    expect(() => parseRef("invalid")).toThrow(/^\[E_BAD_REF\]/);
   });
 });
 

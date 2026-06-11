@@ -43,10 +43,6 @@ export type ReturnedRangePreview = {
 	empty?: true;
 };
 
-export type FullContentPreview = {
-	text: string;
-	nextOffset?: number;
-};
 
 /**
  * Host-visible, opt-in observability surface (Phase 2 C). The LLM never sees
@@ -65,11 +61,6 @@ export type EditMetrics = {
 	changed_lines?: { first: number; last: number };
 	added_lines?: number;
 	removed_lines?: number;
-};
-
-export type ReadMetrics = {
-	truncated: boolean;
-	next_offset?: number;
 };
 
 export type EditMeta = {

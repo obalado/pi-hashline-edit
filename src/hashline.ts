@@ -88,12 +88,11 @@ export function computeLineHash(idx: number, line: string): string {
 	return DICT[xxh32(line, seed) & 0xff];
 }
 
-/** Shared fuzzy-match Unicode replacement regexes (also used by edit-diff.ts). */
-export const FUZZY_SINGLE_QUOTES_RE = /[\u2018\u2019\u201A\u201B]/g;
-export const FUZZY_DOUBLE_QUOTES_RE = /[\u201C\u201D\u201E\u201F]/g;
-export const FUZZY_HYPHENS_RE = /[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g;
-export const FUZZY_UNICODE_SPACES_RE =
-	/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g;
+/** Fuzzy-match Unicode replacement regexes for anchor textHint validation. */
+const FUZZY_SINGLE_QUOTES_RE = /[\u2018\u2019\u201A\u201B]/g;
+const FUZZY_DOUBLE_QUOTES_RE = /[\u201C\u201D\u201E\u201F]/g;
+const FUZZY_HYPHENS_RE = /[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g;
+const FUZZY_UNICODE_SPACES_RE = /[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g;
 
 function normalizeFuzzyLine(text: string): string {
 	return text
@@ -151,14 +150,9 @@ function diagnoseLineRef(ref: string): string {
 	return `[E_BAD_REF] Invalid line reference "${trimmed || ref}". Expected "LINE#HASH" (e.g. "5#MQ").`;
 }
 
-export function parseLineRef(ref: string): { line: number; hash: string } {
-	// Match LINE#HASH format, tolerating:
-	//  - leading ">+" and whitespace (from mismatch/diff display)
-	//  - optional trailing display suffix (":..." content)
-	const parsed = parseAnchorRef(ref);
-	return { line: parsed.line, hash: parsed.hash };
-}
-
+// Parses LINE#HASH format, tolerating leading ">+-" and whitespace (from
+// mismatch/diff display) and an optional trailing ":content" display suffix,
+// which is preserved as `textHint` for fuzzy anchor validation.
 function parseAnchorRef(ref: string): Anchor {
 	const core = ref.replace(/^\s*[>+-]*\s*/, "").trimEnd();
 	const match = core.match(/^([0-9]+)\s*#\s*([^\s:]+)(?:\s*:(.*))?$/s);

@@ -20,12 +20,6 @@ function isTextLikeMimeType(mimeType: string): boolean {
 
 const FILE_TYPE_SNIFF_BYTES = 8192;
 
-export type FileKind =
-	| { kind: "directory" }
-	| { kind: "image"; mimeType: string }
-	| { kind: "text" }
-	| { kind: "binary"; description: string };
-
 export type LoadedFile =
 	| { kind: "directory" }
 	| { kind: "image"; mimeType: string }
@@ -143,19 +137,5 @@ export async function loadFileKindAndText(
 		};
 	} finally {
 		await fileHandle.close();
-	}
-}
-
-export async function classifyFileKind(filePath: string): Promise<FileKind> {
-	const loaded = await loadFileKindAndText(filePath);
-	switch (loaded.kind) {
-		case "directory":
-			return loaded;
-		case "image":
-			return loaded;
-		case "binary":
-			return loaded;
-		case "text":
-			return { kind: "text" };
 	}
 }
