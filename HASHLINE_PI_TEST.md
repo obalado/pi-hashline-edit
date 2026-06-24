@@ -1,12 +1,5 @@
 # Manual pi -e smoke test
 
-This repo has a local wrapper extension:
-
-```ts
-// my-extension.ts
-export { default } from "./index";
-```
-
 ## 1. Reset sample file
 
 ```bash
@@ -21,7 +14,7 @@ EOF
 ## 2. Start pi with local extension
 
 ```bash
-PI_HASHLINE_DEBUG=1 pi -e ./my-extension.ts --no-extensions --no-skills --no-context-files --no-session
+PI_HASHLINE_DEBUG=1 pi -e ./index.ts --no-extensions --no-skills --no-context-files --no-session
 ```
 
 You should see the extension load. With `PI_HASHLINE_DEBUG=1`, session start shows a `Hashline Edit mode active` notification.
