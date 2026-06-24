@@ -1,12 +1,12 @@
 {
   "name": "pi-hashline-context-edit",
-  "version": "0.8.0",
+  "version": "0.11.0",
   "description": "Hashline read/edit tool override for pi-coding-agent",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/obalado/pi-hashline-context-edit.git"
   },
-  "author": "RimuruW",
+  "author": "obalado",
   "keywords": [
     "pi-package",
     "pi",
