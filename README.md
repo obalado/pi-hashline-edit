@@ -1,4 +1,4 @@
-![pi-hashline-context-edit](assets/banner.jpeg)
+![pi-hashline-context-edit](assets/banner.png)
 
 # pi-hashline-context-edit
 
