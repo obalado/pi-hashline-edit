@@ -4,9 +4,20 @@
 
 A [pi-coding-agent](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent) extension that replaces the built-in `read` and `edit` tools with a hash-anchored line-editing workflow.
 
-Every line returned by normal `read` carries a short contextual hash. Edits reference these hashes instead of raw text, so the tool can detect stale context and reject outdated changes before they reach the file.
+## Fork notice
 
-Inspired by [oh-my-pi](https://github.com/can1357/oh-my-pi).
+This project is a fork of `pi-hashline-edit`, itself inspired by [oh-my-pi](https://github.com/can1357/oh-my-pi). This fork keeps the strict hashline editing contract and adds v0.8 changes focused on safer stale-context detection, optional raw reads, and deterministic stale-anchor recovery.
+
+Notable fork changes:
+
+- Contextual FNV-1a hashes: anchors now include line number plus previous/current/next visible line context, so changing one line invalidates nearby stale anchors.
+- Removed `xxhashjs`; hashing is inline and dependency-free.
+- Added `read({ raw: true })` for unanchored inspection/token-saving output.
+- Added normal-read snapshot cache and safe 3-way stale-anchor merge recovery for non-overlapping external file changes.
+- Updated diff previews and edit success anchors to compute hashes against the full post-edit file context.
+- Updated docs, prompts, ADRs, tests, and package metadata for v0.8.
+
+Every line returned by normal `read` carries a short contextual hash. Edits reference these hashes instead of raw text, so the tool can detect stale context and reject outdated changes before they reach the file.
 
 ## Installation
 
