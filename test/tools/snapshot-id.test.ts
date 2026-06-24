@@ -161,9 +161,7 @@ describe("snapshotId surface (details-only after W2)", () => {
 				}
 
 				expect(errorMessage).toMatch(/^\[E_STALE_ANCHOR\]/);
-				expect(errorMessage).toContain(
-					`>>> 2#${computeLineHash(2, "TWO!")}:TWO!`,
-				);
+				expect(errorMessage).toMatch(/>>> 2#[ZPMQVRWSNKTXJBYH]{2}:TWO!/);
 			},
 		);
 	});

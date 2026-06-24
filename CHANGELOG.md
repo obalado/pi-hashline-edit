@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - Unreleased
+
+### Added
+
+- Add contextual FNV-1a hashlines: hashes now include line number plus previous/current/next visible line context.
+- Add `read` raw mode (`raw: true`) for unanchored inspection output.
+- Add in-memory normal-read snapshots and deterministic 3-way stale-anchor recovery for non-overlapping file changes.
+
+### Changed
+
+- **Breaking:** hash values differ from v0.7; anchors from older reads must be refreshed.
+- Diff previews and changed-response anchors now compute hashes against the full post-edit file context.
+- Terminal newline sentinels remain hidden and are no longer accepted as edit anchors.
+
+### Removed
+
+- Remove `xxhashjs` runtime dependency.
+
 ## [0.7.0] - 2026-06-12
 
 ### Added

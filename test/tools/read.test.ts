@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import register from "../../index";
-import { formatHashlineRegion } from "../../src/hashline";
+import {
+	computeLineHash,
+	computeLineHashAt,
+	formatHashlineRegionFromFile,
+} from "../../src/hashline";
 import { formatHashlineReadPreview } from "../../src/read";
-import { computeLineHash } from "../../src/hashline";
 import { getText, makeFakePiRegistry, makeToolContext, withTempFile } from "../support/fixtures";
 
 vi.mock("../../src/file-kind", () => ({
@@ -34,13 +37,25 @@ describe("formatHashlineReadPreview", () => {
 			{ length: 10 },
 			(_, index) => `line-${index + 1}`,
 		).join("\n");
+		const lines = text.split("\n");
 		const result = formatHashlineReadPreview(text, { offset: 8 });
 
 		expect(result.text.split("\n").slice(0, 3)).toEqual([
-			` 8#${computeLineHash(8, "line-8")}:line-8`,
-			` 9#${computeLineHash(9, "line-9")}:line-9`,
-			`10#${computeLineHash(10, "line-10")}:line-10`,
+			` 8#${computeLineHashAt(lines, 8)}:line-8`,
+			` 9#${computeLineHashAt(lines, 9)}:line-9`,
+			`10#${computeLineHashAt(lines, 10)}:line-10`,
 		]);
+	});
+
+	it("returns raw lines without hashline prefixes when raw is true", () => {
+		const result = formatHashlineReadPreview("alpha\nbeta\ngamma", {
+			offset: 2,
+			limit: 2,
+			raw: true,
+		});
+
+		expect(result.text).toBe("beta\ngamma");
+		expect(result.text).not.toMatch(/^\s*\d+#/m);
 	});
 
 	it("returns an advisory for empty files instead of a synthetic empty-line anchor", () => {
@@ -91,36 +106,48 @@ describe("formatHashlineReadPreview", () => {
 	});
 });
 
-describe("formatHashlineRegion", () => {
-	it("formats lines with LINE#HASH anchors starting from the given line number", () => {
-		const lines = ["alpha", "beta", "gamma"];
-		const result = formatHashlineRegion(lines, 5);
+describe("formatHashlineRegionFromFile", () => {
+	it("formats lines with contextual LINE#HASH anchors", () => {
+		const lines = ["zero", "one", "alpha", "beta", "gamma", "tail"];
+		const result = formatHashlineRegionFromFile(lines, 3, 5);
 
 		expect(result).toBe(
-			`5#${computeLineHash(5, "alpha")}:alpha\n` +
-				`6#${computeLineHash(6, "beta")}:beta\n` +
-				`7#${computeLineHash(7, "gamma")}:gamma`,
+			`3#${computeLineHashAt(lines, 3)}:alpha\n` +
+				`4#${computeLineHashAt(lines, 4)}:beta\n` +
+				`5#${computeLineHashAt(lines, 5)}:gamma`,
 		);
 	});
 
 	it("pads region line numbers to the widest line number", () => {
-		const lines = ["alpha", "beta", "gamma"];
-		const result = formatHashlineRegion(lines, 8);
+		const lines = [
+			"line1",
+			"line2",
+			"line3",
+			"line4",
+			"line5",
+			"line6",
+			"line7",
+			"alpha",
+			"beta",
+			"gamma",
+		];
+		const result = formatHashlineRegionFromFile(lines, 8, 10);
 
 		expect(result).toBe(
-			` 8#${computeLineHash(8, "alpha")}:alpha\n` +
-				` 9#${computeLineHash(9, "beta")}:beta\n` +
-				`10#${computeLineHash(10, "gamma")}:gamma`,
+			` 8#${computeLineHashAt(lines, 8)}:alpha\n` +
+				` 9#${computeLineHashAt(lines, 9)}:beta\n` +
+				`10#${computeLineHashAt(lines, 10)}:gamma`,
 		);
 	});
 
 	it("handles a single line", () => {
-		const result = formatHashlineRegion(["hello"], 1);
-		expect(result).toBe(`1#${computeLineHash(1, "hello")}:hello`);
+		const lines = ["hello"];
+		const result = formatHashlineRegionFromFile(lines, 1, 1);
+		expect(result).toBe(`1#${computeLineHashAt(lines, 1)}:hello`);
 	});
 
-	it("handles empty array", () => {
-		const result = formatHashlineRegion([], 1);
+	it("handles empty range", () => {
+		const result = formatHashlineRegionFromFile([], 1, 0);
 		expect(result).toBe("");
 	});
 });

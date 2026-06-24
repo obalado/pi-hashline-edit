@@ -4,7 +4,7 @@
 
 A [pi-coding-agent](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent) extension that replaces the built-in `read` and `edit` tools with a hash-anchored line-editing workflow.
 
-Every line returned by `read` carries a short content hash. Edits reference these hashes instead of raw text, so the tool can detect stale context and reject outdated changes before they reach the file.
+Every line returned by normal `read` carries a short contextual hash. Edits reference these hashes instead of raw text, so the tool can detect stale context and reject outdated changes before they reach the file.
 
 Inspired by [oh-my-pi](https://github.com/can1357/oh-my-pi).
 
@@ -31,11 +31,12 @@ Text files are returned with a `LINE#HASH:` prefix on every line. Line numbers m
 ```
 
 - `LINE` — 1-indexed line number.
-- `HASH` — 2-character content hash from the alphabet `ZPMQVRWSNKTXJBYH`.
+- `HASH` — 2-character contextual hash from the alphabet `ZPMQVRWSNKTXJBYH`.
 
 Optional parameters:
 - `offset` — start reading from this line number (1-indexed).
 - `limit` — maximum number of lines to return.
+- `raw` — return raw file lines without `LINE#HASH:` prefixes. Use this for inspection/token saving only; use normal `read` before anchor edits.
 
 Images (JPEG, PNG, GIF, WebP) are passed through as attachments and do not participate in the hashline protocol. Binary and directory paths are rejected with a descriptive error. Empty files return an advisory suggesting `prepend`/`append` instead of a synthetic anchor.
 
@@ -71,8 +72,8 @@ The full diff is stored in `details.diff` for the host UI. The model-visible tex
 
 ## Design Decisions
 
-- **Stale anchors fail.** A hash mismatch means the file has changed since the last `read`. The error includes a snippet with fresh `LINE#HASH` references for the affected lines for immediate retry.
-- **No fallback relocation.** Mismatched anchors are never silently relocated to a "close enough" line. This trades convenience for correctness.
+- **Stale anchors fail or merge safely.** A hash mismatch means the file has changed since the last `read`. If the last normal `read` snapshot is available and the requested edit does not overlap current file changes, the edit may be merged with warning `[W_MERGED_STALE_ANCHORS]`. Otherwise the error includes fresh `LINE#HASH` retry snippets.
+- **No fallback relocation.** Mismatched anchors are never silently relocated to a "close enough" line. Merge recovery composes non-overlapping changes only; conflicts still fail.
 - **Strict patch content.** If `lines` contains `LINE#HASH:` display prefixes or diff `+`/`-` markers, the edit is rejected with `[E_INVALID_PATCH]`. The model must send literal file content; the runtime does not silently strip accidental prefixes.
 - **Native edit normalization.** When a caller sends a top-level `oldText`/`newText` payload (the built-in edit format), the request is normalized into `op: "replace_text"` and uses the same strict exact-unique-match semantics as any other `replace_text` edit. Inexact or non-unique matches are rejected; there is no fuzzy legacy fallback or separate compatibility notifier.
 - **Atomic writes.** Files are written via temp-file-then-rename to avoid corruption from interrupted writes. Symlink chains are resolved so the target file is updated without replacing the symlink. Hard-linked files are updated in place to preserve the shared inode. File permissions are preserved across atomic renames.
@@ -80,11 +81,15 @@ The full diff is stored in `details.diff` for the host UI. The model-visible tex
 
 ## Hashing
 
-Hashes are computed with [xxhashjs](https://github.com/pierrec/js-xxhash) (xxHash32), then mapped to a 2-character string from a custom 16-character alphabet.
+Hashes use an inline FNV-1a 32-bit hash over line number plus neighboring context:
 
-The alphabet (`ZPMQVRWSNKTXJBYH`) excludes hex digits, common vowels, and visually ambiguous letters (D/G/I/L/O), so a reference like `5#MQ` can never be confused with code content, hex literals, or English words.
+```text
+lineNumber \0 previousLine \0 currentLine \0 nextLine
+```
 
-Lines that contain no alphanumeric characters (e.g. a lone `}`) use their line number as the hash seed to reduce collisions on structurally identical markers.
+The low byte maps to a 2-character string from the custom alphabet `ZPMQVRWSNKTXJBYH`, which excludes hex digits, common vowels, and visually ambiguous letters (D/G/I/L/O). A reference like `5#MQ` stays compact and unambiguous.
+
+Because hashes include previous and next visible lines, changing one line also invalidates anchors for its immediate neighbors. This catches common line-shift/stale-context mistakes while keeping anchors short.
 
 ## Development
 

@@ -81,12 +81,12 @@ describe("applyHashlineEdits — basic operations", () => {
 		expect(result.firstChangedLine).toBe(3);
 	});
 
-	it("treats append after the terminal newline sentinel as EOF append", () => {
+	it("rejects append after the hidden terminal newline sentinel", () => {
 		const content = "aaa\nbbb\n";
 		const edits: HashlineEdit[] = [{ op: "append", pos: makeTag(3, ""), lines: ["ccc"] }];
-		const result = applyHashlineEdits(content, edits);
-		expect(result.content).toBe("aaa\nbbb\nccc\n");
-		expect(result.firstChangedLine).toBe(3);
+		expect(() => applyHashlineEdits(content, edits)).toThrow(
+			/Line 3 does not exist \(file has 2 lines\)/,
+		);
 	});
 
 	it("appends to empty file", () => {
@@ -409,30 +409,26 @@ describe("applyHashlineEdits — lastChangedLine tracking", () => {
 		expect(result.content).toBe("P\na\nb\nc\nX");
 	});
 
-	it("tracks lastChangedLine for empty-file append + prepend (P1 regression)", () => {
+	it("rejects empty-file append + prepend at the same insertion boundary", () => {
 		const content = "";
 		const edits: HashlineEdit[] = [
 			{ op: "append", lines: ["A"] },
 			{ op: "prepend", lines: ["P"] },
 		];
-		const result = applyHashlineEdits(content, edits);
-		// Final doc: P,A  (2 lines)
-		expect(result.firstChangedLine).toBe(1);
-		expect(result.lastChangedLine).toBe(2);
-		expect(result.content).toBe("P\nA");
+		expect(() => applyHashlineEdits(content, edits)).toThrow(
+			/conflicting edits.*same insertion boundary/i,
+		);
 	});
 
-	it("tracks lastChangedLine for sentinel append + prepend (P1 regression)", () => {
+	it("rejects sentinel append + prepend because the sentinel is hidden", () => {
 		const content = "a\nb\nc\n";
 		const edits: HashlineEdit[] = [
 			{ op: "append", pos: makeTag(4, ""), lines: ["X"] },
 			{ op: "prepend", lines: ["P"] },
 		];
-		const result = applyHashlineEdits(content, edits);
-		// Final doc: P,a,b,c,X\n  →  P,a,b,c,X  (5 lines after join)
-		expect(result.firstChangedLine).toBe(1);
-		expect(result.lastChangedLine).toBe(5);
-		expect(result.content).toBe("P\na\nb\nc\nX\n");
+		expect(() => applyHashlineEdits(content, edits)).toThrow(
+			/Line 4 does not exist \(file has 3 lines\)/,
+		);
 	});
 
 	it("tracks offsets for range replace combined with boundary append without autocorrection", () => {

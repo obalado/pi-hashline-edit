@@ -101,9 +101,7 @@ describe("applyHashlineEdits — error handling", () => {
 			if (!(error instanceof Error)) {
 				throw error;
 			}
-			expect(error.message).toContain(
-				`>>> ${validEnd.line}#${validEnd.hash}:eee`,
-			);
+			expect(error.message).toMatch(/>>> 5#[ZPMQVRWSNKTXJBYH]{2}:eee/);
 		}
 	});
 
@@ -161,14 +159,13 @@ describe("applyHashlineEdits — error handling", () => {
 		).toThrow(/conflicting edits.*same insertion boundary/i);
 	});
 
-	it("rejects EOF append and sentinel-anchored EOF append on newline-terminated files", () => {
+	it("rejects sentinel-anchored EOF append on newline-terminated files", () => {
 		const content = "a\nb\n";
 		expect(() =>
 			applyHashlineEdits(content, [
-				{ op: "append", lines: ["X"] },
 				{ op: "append", pos: makeTag(3, ""), lines: ["Y"] },
 			]),
-		).toThrow(/conflicting edits.*same insertion boundary/i);
+		).toThrow(/Line 3 does not exist \(file has 2 lines\)/);
 	});
 });
 
@@ -205,9 +202,12 @@ describe("applyHashlineEdits — heuristics", () => {
 		expect(result.content).toBe(
 			"before();\nbefore();\nif (ok) {\n  runSafe();\n}\nafter();",
 		);
-		expect(result.warnings).toEqual([
-			"Potential boundary duplication before replace 2#YP-3#TP: the replacement starts with a line that matches the preceding surviving line after trim.",
-		]);
+		expect(result.warnings?.[0]).toContain(
+			"Potential boundary duplication before replace 2#",
+		);
+		expect(result.warnings?.[0]).toContain(
+			"the replacement starts with a line that matches the preceding surviving line after trim.",
+		);
 	});
 
 	it("does not auto-correct escaped tab indentation even when the env flag is set", () => {

@@ -6,7 +6,7 @@ import {
 	hashlineEditToolSchema,
 	registerEditTool,
 } from "../../src/edit";
-import { computeLineHash } from "../../src/hashline";
+import { computeLineHash, computeLineHashAt } from "../../src/hashline";
 import {
 	makeFakePiRegistry,
 	makeTestTheme,
@@ -260,7 +260,9 @@ describe("registerEditTool", () => {
 			expect(rendered).not.toContain("Changes: +1 -1");
 			expect(rendered).not.toContain("Diff preview:");
 			expect(rendered).not.toContain("```diff");
-			expect(rendered).toContain(`+2#${computeLineHash(2, "BBB")}:BBB`);
+			expect(rendered).toContain(
+				`+2#${computeLineHashAt(["aaa", "BBB", "ccc"], 2)}:BBB`,
+			);
 			expect(rendered).not.toContain("Updated sample.txt");
 			expect(rendered).not.toContain("```text");
 			expect(result.details?.diff).toContain("+2");

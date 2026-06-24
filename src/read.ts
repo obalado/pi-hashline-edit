@@ -13,8 +13,10 @@ import { access as fsAccess } from "fs/promises";
 import { constants } from "fs";
 import { normalizeToLF, stripBom } from "./edit-diff";
 import { loadFileKindAndText } from "./file-kind";
-import { formatHashlineRegion } from "./hashline";
+import { formatHashlineRegionFromFile } from "./hashline";
 import { resolveToCwd } from "./path-utils";
+import { resolveMutationTargetPath } from "./fs-write";
+import { rememberReadSnapshot } from "./read-snapshot";
 import { throwIfAborted } from "./runtime";
 import { getFileSnapshot } from "./snapshot";
 
@@ -66,7 +68,7 @@ function getPreviewLines(text: string): string[] {
 
 export function formatHashlineReadPreview(
 	text: string,
-	options: { offset?: number; limit?: number },
+	options: { offset?: number; limit?: number; raw?: boolean },
 ): { text: string; truncation?: TruncationResult; nextOffset?: number } {
 	const allLines = getPreviewLines(text);
 	const totalLines = allLines.length;
@@ -94,10 +96,12 @@ export function formatHashlineReadPreview(
 		? Math.min(startLine - 1 + limit, totalLines)
 		: totalLines;
 	const selected = allLines.slice(startLine - 1, endIdx);
-	const formatted = formatHashlineRegion(selected, startLine);
+	const formatted = options.raw
+		? selected.join("\n")
+		: formatHashlineRegionFromFile(allLines, startLine, endIdx);
 
 	const truncation = truncateHead(formatted);
-	if (truncation.firstLineExceedsLimit) {
+	if (truncation.firstLineExceedsLimit && !options.raw) {
 		return {
 			text: `[Line ${startLine} exceeds ${formatSize(truncation.maxBytes)}. Hashline output requires full lines; cannot compute hashes for a truncated preview.]`,
 			truncation,
@@ -149,6 +153,12 @@ export function registerReadTool(pi: ExtensionAPI): void {
 					description: "Maximum number of lines to read",
 				}),
 			),
+			raw: Type.Optional(
+				Type.Boolean({
+					description:
+						"Return raw file lines without LINE#HASH prefixes. Use normal read before edit.",
+				}),
+			),
 		}),
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -190,12 +200,19 @@ export function registerReadTool(pi: ExtensionAPI): void {
 				const builtinRead = createReadTool(ctx.cwd);
 				const executeBuiltinRead = builtinRead.execute as unknown as (
 					toolCallId: string,
-					input: typeof params,
+					input: Omit<typeof params, "raw">,
 					abortSignal: typeof signal,
 					onUpdate: typeof _onUpdate,
 					context: typeof ctx,
 				) => ReturnType<typeof builtinRead.execute>;
-				return executeBuiltinRead(_toolCallId, params, signal, _onUpdate, ctx);
+				const { raw: _raw, ...builtinParams } = params;
+				return executeBuiltinRead(
+					_toolCallId,
+					builtinParams,
+					signal,
+					_onUpdate,
+					ctx,
+				);
 			}
 
 			throwIfAborted(signal);
@@ -203,8 +220,16 @@ export function registerReadTool(pi: ExtensionAPI): void {
 			const preview = formatHashlineReadPreview(normalized, {
 				offset: params.offset,
 				limit: params.limit,
+				raw: params.raw,
 			});
 			const snapshot = await getFileSnapshot(absolutePath);
+			if (params.raw !== true) {
+				rememberReadSnapshot({
+					canonicalPath: await resolveMutationTargetPath(absolutePath),
+					normalizedContent: normalized,
+					snapshotId: snapshot.snapshotId,
+				});
+			}
 
 			// Invalid UTF-8 bytes are decoded as U+FFFD, matching Pi's built-in
 			// tools. Warn only when the decoder reported invalid bytes; a literal,

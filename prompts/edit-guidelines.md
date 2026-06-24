@@ -1,3 +1,4 @@
-- Use edit with LINE#HASH anchors for all file changes; batch every change to one file into a single edit call.
+- Use edit with LINE#HASH anchors from normal (non-raw) read for all file changes; batch every change to one file into a single edit call.
 - After a successful edit, the returned --- Anchors --- block replaces a re-read for nearby follow-up edits.
+- Anchors are contextual; if a neighboring line changed, old anchors may go stale.
 - On [E_STALE_ANCHOR], retry with the >>> lines quoted in the error instead of re-reading the whole file.

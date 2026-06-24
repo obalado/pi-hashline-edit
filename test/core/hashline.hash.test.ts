@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	applyHashlineEdits,
 	computeLineHash,
+	computeLineHashAt,
 	resolveEditAnchors,
 	type HashlineEdit,
 } from "../../src/hashline";
@@ -22,16 +23,25 @@ describe("computeLineHash", () => {
 		expect(computeLineHash(1, "hello\r")).toBe(computeLineHash(1, "hello"));
 	});
 
-	it("mixes line index for symbol-only lines", () => {
+	it("mixes line number for all lines", () => {
 		const h1 = computeLineHash(1, "}");
 		const h10 = computeLineHash(10, "}");
 		expect(h1).toMatch(/^[ZPMQVRWSNKTXJBYH]{2}$/);
 		expect(h10).toMatch(/^[ZPMQVRWSNKTXJBYH]{2}$/);
+		expect(computeLineHash(1, "function foo()")).not.toBe(
+			computeLineHash(99, "function foo()"),
+		);
 	});
 
-	it("does NOT mix line index for lines with alphanumeric content", () => {
-		expect(computeLineHash(1, "function foo()")).toBe(
-			computeLineHash(99, "function foo()"),
+	it("mixes neighboring lines in contextual hashes", () => {
+		const before = ["alpha", "beta", "gamma"];
+		const afterPrevChanged = ["ALPHA", "beta", "gamma"];
+		const afterNextChanged = ["alpha", "beta", "GAMMA"];
+		expect(computeLineHashAt(before, 2)).not.toBe(
+			computeLineHashAt(afterPrevChanged, 2),
+		);
+		expect(computeLineHashAt(before, 2)).not.toBe(
+			computeLineHashAt(afterNextChanged, 2),
 		);
 	});
 });

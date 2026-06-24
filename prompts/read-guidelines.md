@@ -1,2 +1,3 @@
-- Use read before edit whenever you do not hold current LINE#HASH anchors for the file.
+- Use normal read before edit whenever you do not hold current LINE#HASH anchors for the file.
+- Use `raw: true` only for inspection/token saving; raw output has no anchors.
 - If read output is truncated, continue with the offset it names — never guess unseen lines.

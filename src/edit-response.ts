@@ -6,7 +6,10 @@
  */
 
 import { generateDiffString } from "./edit-diff";
-import { computeAffectedLineRange, formatHashlineRegion } from "./hashline";
+import {
+	computeAffectedLineRange,
+	formatHashlineRegionFromFile,
+} from "./hashline";
 
 const CHANGED_ANCHOR_TEXT_BUDGET_BYTES = 50 * 1024;
 
@@ -151,8 +154,11 @@ function buildAnchorsBlock(
 	if (!anchorRange) {
 		return ANCHORS_OMITTED_TEXT;
 	}
-	const region = resultLines.slice(anchorRange.start - 1, anchorRange.end);
-	const formatted = formatHashlineRegion(region, anchorRange.start);
+	const formatted = formatHashlineRegionFromFile(
+		resultLines,
+		anchorRange.start,
+		anchorRange.end,
+	);
 	const block = `--- Anchors ${anchorRange.start}-${anchorRange.end} ---\n${formatted}`;
 	return Buffer.byteLength(block, "utf8") <= CHANGED_ANCHOR_TEXT_BUDGET_BYTES
 		? block

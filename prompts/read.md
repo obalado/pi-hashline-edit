@@ -1,6 +1,6 @@
-Read a text file. Every line returns as `LINE#HASH:content`; copy those anchors verbatim into `edit` — they are the only way edits address lines.
+Read a text file. By default every line returns as `LINE#HASH:content`; copy those anchors verbatim into `edit` — they are the only way edits address lines.
 
-Page large files with `offset` (1-based line) and `limit`. Default cap: {{DEFAULT_MAX_LINES}} lines or {{DEFAULT_MAX_BYTES}}; truncated output ends with the exact `offset` to continue from.
+Page large files with `offset` (1-based line) and `limit`. Default cap: {{DEFAULT_MAX_LINES}} lines or {{DEFAULT_MAX_BYTES}}; truncated output ends with the exact `offset` to continue from. Use `raw: true` only for inspection/token saving; raw output has no anchors and should not be used before `edit`.
 
 Supported images return as attachments (no anchors); binary files and directories are rejected. An empty file returns an advisory — insert content with edit `prepend`/`append`, omitting `pos`.
 

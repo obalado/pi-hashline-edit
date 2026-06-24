@@ -1,5 +1,5 @@
 import * as Diff from "diff";
-import { computeLineHash } from "./hashline";
+import { computeLineHashAt, getVisibleLines } from "./hashline";
 
 // ─── Line ending normalization ──────────────────────────────────────────
 
@@ -35,12 +35,13 @@ function formatDiffPreviewLine(
 	lineNumWidth: number,
 	line: string,
 	includeHash: boolean,
+	newLines: readonly string[],
 ): string {
 	const paddedLineNum = String(lineNum).padStart(lineNumWidth, " ");
 	if (!includeHash) {
 		return `${prefix}${paddedLineNum}    ${line}`;
 	}
-	return `${prefix}${paddedLineNum}#${computeLineHash(lineNum, line)}:${line}`;
+	return `${prefix}${paddedLineNum}#${computeLineHashAt(newLines, lineNum)}:${line}`;
 }
 
 export function generateDiffString(
@@ -50,9 +51,10 @@ export function generateDiffString(
 ): { diff: string } {
 	const parts = Diff.diffLines(oldContent, newContent);
 	const output: string[] = [];
+	const newLines = getVisibleLines(newContent);
 	const maxLineNum = Math.max(
-		oldContent.split("\n").length,
-		newContent.split("\n").length,
+		getVisibleLines(oldContent).length,
+		newLines.length,
 	);
 	const lineNumWidth = String(maxLineNum).length;
 	let oldLineNum = 1;
@@ -68,12 +70,26 @@ export function generateDiffString(
 			for (const line of raw) {
 				if (part.added) {
 					output.push(
-						formatDiffPreviewLine("+", newLineNum, lineNumWidth, line, true),
+						formatDiffPreviewLine(
+							"+",
+							newLineNum,
+							lineNumWidth,
+							line,
+							true,
+							newLines,
+						),
 					);
 					newLineNum++;
 				} else {
 					output.push(
-						formatDiffPreviewLine("-", oldLineNum, lineNumWidth, line, false),
+						formatDiffPreviewLine(
+							"-",
+							oldLineNum,
+							lineNumWidth,
+							line,
+							false,
+							newLines,
+						),
 					);
 					oldLineNum++;
 				}
@@ -105,7 +121,14 @@ export function generateDiffString(
 			}
 			for (const line of linesToShow) {
 				output.push(
-					formatDiffPreviewLine(" ", newLineNum, lineNumWidth, line, true),
+					formatDiffPreviewLine(
+						" ",
+						newLineNum,
+						lineNumWidth,
+						line,
+						true,
+						newLines,
+					),
 				);
 				oldLineNum++;
 				newLineNum++;

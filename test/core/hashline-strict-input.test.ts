@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
 	applyHashlineEdits,
 	computeLineHash,
+	computeLineHashAt,
+	getVisibleLines,
 	resolveEditAnchors,
 	type HashlineToolEdit,
 } from "../../src/hashline";
@@ -66,8 +68,9 @@ describe("strict edit input (no autocorrection)", () => {
 });
 
 describe("partial hash prefixes copied into content (issue #24)", () => {
-	// Fixture hash set is {JN, NK, WB, SJ}; "ZZ"/"ZP"/"TS" are confirmed misses.
 	const file = "alpha\nbeta\ngamma\ndelta";
+	const fileLines = getVisibleLines(file);
+	const existingBareHash = computeLineHashAt(fileLines, 2);
 	const anchor = `1#${computeLineHash(1, "alpha")}`;
 
 	function applyTool(toolEdits: HashlineToolEdit[]) {
@@ -75,25 +78,29 @@ describe("partial hash prefixes copied into content (issue #24)", () => {
 	}
 
 	it("warns (does not reject) when a bare prefix matches an existing file line hash", () => {
-		// "NK" is the hash of line 2 ("beta"), but 2-char hashes can collide with
-		// legitimate literal content. Warn only; never silently patch or reject.
+		// existingBareHash is the hash of line 2 ("beta"), but 2-char hashes can
+		// collide with legitimate literal content. Warn only; never silently patch or reject.
 		const result = applyTool([
-			{ op: "replace", pos: anchor, lines: ["NK:### heading", "real content"] },
+			{
+				op: "replace",
+				pos: anchor,
+				lines: [`${existingBareHash}:### heading`, "real content"],
+			},
 		]);
 		expect(
 			result.warnings?.some((w) => /match existing line hashes/.test(w)),
 		).toBe(true);
-		expect(result.content).toContain("NK:### heading");
+		expect(result.content).toContain(`${existingBareHash}:### heading`);
 	});
 
 	it("preserves valid literal 'HH:' content even when HH exists in the file hash set", () => {
 		const result = applyTool([
-			{ op: "replace", pos: anchor, lines: ["NK:text"] },
+			{ op: "replace", pos: anchor, lines: [`${existingBareHash}:text`] },
 		]);
 		expect(
 			result.warnings?.some((w) => /match existing line hashes/.test(w)),
 		).toBe(true);
-		expect(result.content).toContain("NK:text");
+		expect(result.content).toContain(`${existingBareHash}:text`);
 	});
 
 	it("warns (does not reject) when bare prefixes miss the file hash set", () => {

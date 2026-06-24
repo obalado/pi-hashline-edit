@@ -203,7 +203,7 @@ describe("chained edit anchors", () => {
 		});
 	});
 
-	it("unchanged line anchors from original read remain valid after chained edits", async () => {
+	it("unchanged neighboring line anchors from original read go stale after contextual hash changes", async () => {
 		await withTempFile("stale.ts", "alpha\nbeta\n", async ({ cwd }) => {
 			const { pi, getTool } = makeFakePiRegistry();
 			register(pi);
@@ -242,16 +242,17 @@ describe("chained edit anchors", () => {
 				),
 			).rejects.toThrow(/stale anchor/);
 
-			// But alphaRef (unchanged line) should still work.
-			const alphaEdit = await editTool.execute(
-				"e3",
-				{ path: "stale.ts", edits: [{ op: "replace", pos: alphaRef, lines: ["ALPHA"] }] },
-				undefined,
-				undefined,
-				ctx,
-			);
-			expect(getText(alphaEdit)).toContain("--- Anchors");
-			expect(getText(alphaEdit)).toContain(":ALPHA");
+			// alpha's text is unchanged, but its next-line context changed, so its
+			// original contextual anchor must also fail.
+			await expect(
+				editTool.execute(
+					"e3",
+					{ path: "stale.ts", edits: [{ op: "replace", pos: alphaRef, lines: ["ALPHA"] }] },
+					undefined,
+					undefined,
+					ctx,
+				),
+			).rejects.toThrow(/stale anchor/);
 		});
 	});
 });

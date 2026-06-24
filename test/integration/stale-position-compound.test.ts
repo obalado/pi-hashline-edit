@@ -3,7 +3,7 @@ import {
 	applyHashlineEdits,
 	computeAffectedLineRange,
 	computeLineHash,
-	formatHashlineRegion,
+	formatHashlineRegionFromFile,
 	resolveEditAnchors,
 	type HashlineToolEdit,
 	type HashlineEdit,
@@ -78,9 +78,12 @@ describe("stale-position compound edits", () => {
 		expect(anchorRange!.start).toBe(1);
 		expect(anchorRange!.end).toBe(10); // min(13, 8 + 2)
 
-		// ── Verify formatHashlineRegion produces valid anchors ──
-		const regionLines = expectedLines.slice(anchorRange!.start - 1, anchorRange!.end);
-		const region = formatHashlineRegion(regionLines, anchorRange!.start);
+		// ── Verify formatHashlineRegionFromFile produces valid anchors ──
+		const region = formatHashlineRegionFromFile(
+			expectedLines,
+			anchorRange!.start,
+			anchorRange!.end,
+		);
 		expect(region).toContain("header-1");
 		expect(region).toContain("NEW_LINE_5");
 		// Range ends at line 10 of final doc (8 + 2 context), which is "line7"

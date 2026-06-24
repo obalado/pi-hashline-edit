@@ -4,7 +4,6 @@
  * Vendored & adapted from oh-my-pi (MIT, github.com/can1357/oh-my-pi).
  */
 
-import * as XXH from "xxhashjs";
 import { throwIfAborted } from "./runtime";
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -48,6 +47,11 @@ const DICT = Array.from({ length: 256 }, (_, i) => {
 	return `${NIBBLE_STR[h]}${NIBBLE_STR[l]}`;
 });
 
+export const HASHLINE_HASH_VERSION = "fnv1a-context-v1" as const;
+
+const HASHLINE_BOF = "<BOF>";
+const HASHLINE_EOF = "<EOF>";
+
 /**
  * Patterns used to detect (and reject) hashline display prefixes inside edit
  * payloads. The runtime no longer strips them — the model must send literal
@@ -75,17 +79,82 @@ const HASHLINE_BARE_PREFIX_RE = /^\s*([ZPMQVRWSNKTXJBYH]{2}):/;
 /** Lines containing no alphanumeric characters (only punctuation/symbols/whitespace). */
 const RE_SIGNIFICANT = /[\p{L}\p{N}]/u;
 
-function xxh32(input: string, seed = 0): number {
-	return XXH.h32(seed).update(input).digest().toNumber() >>> 0;
+function normalizeHashLine(line: string): string {
+	return line.replace(/\r/g, "").trimEnd();
 }
 
-export function computeLineHash(idx: number, line: string): string {
-	line = line.replace(/\r/g, "").trimEnd();
-	let seed = 0;
-	if (!RE_SIGNIFICANT.test(line)) {
-		seed = idx;
+function fnv1a32(input: string): number {
+	let hash = 0x811c9dc5;
+	for (let index = 0; index < input.length; index++) {
+		hash ^= input.charCodeAt(index);
+		hash = Math.imul(hash, 0x01000193) >>> 0;
 	}
-	return DICT[xxh32(line, seed) & 0xff];
+	return hash >>> 0;
+}
+
+export function computeLineHashAt(
+	lines: readonly string[],
+	lineNumber: number,
+): string {
+	if (!Number.isInteger(lineNumber) || lineNumber < 1) {
+		throw new Error(`Line number must be >= 1, got ${lineNumber}.`);
+	}
+	if (lineNumber > lines.length) {
+		throw new Error(
+			`Line ${lineNumber} does not exist (file has ${lines.length} lines).`,
+		);
+	}
+
+	const index = lineNumber - 1;
+	const prev = index > 0 ? normalizeHashLine(lines[index - 1]!) : HASHLINE_BOF;
+	const curr = normalizeHashLine(lines[index]!);
+	const next =
+		index < lines.length - 1
+			? normalizeHashLine(lines[index + 1]!)
+			: HASHLINE_EOF;
+	return DICT[fnv1a32(`${lineNumber}\0${prev}\0${curr}\0${next}`) & 0xff];
+}
+
+export function computeLineHashes(lines: readonly string[]): string[] {
+	return lines.map((_, index) => computeLineHashAt(lines, index + 1));
+}
+
+export function getVisibleLines(text: string): string[] {
+	if (text.length === 0) {
+		return [];
+	}
+	const lines = text.split("\n");
+	return text.endsWith("\n") ? lines.slice(0, -1) : lines;
+}
+
+export type HashlineFile = {
+	normalizedContent: string;
+	visibleLines: string[];
+	hasTerminalNewline: boolean;
+	hashVersion: typeof HASHLINE_HASH_VERSION;
+};
+
+export function buildHashlineFile(normalizedContent: string): HashlineFile {
+	return {
+		normalizedContent,
+		visibleLines: getVisibleLines(normalizedContent),
+		hasTerminalNewline: normalizedContent.endsWith("\n"),
+		hashVersion: HASHLINE_HASH_VERSION,
+	};
+}
+
+export function computeLineHash(
+	lineNumber: number,
+	line: string,
+	context?: { prev?: string; next?: string },
+): string {
+	const prev = context?.prev ?? HASHLINE_BOF;
+	const next = context?.next ?? HASHLINE_EOF;
+	return DICT[
+		fnv1a32(
+			`${lineNumber}\0${normalizeHashLine(prev)}\0${normalizeHashLine(line)}\0${normalizeHashLine(next)}`,
+		) & 0xff
+	];
 }
 
 /** Fuzzy-match Unicode replacement regexes for anchor textHint validation. */
@@ -230,8 +299,8 @@ function formatMismatchError(
 	for (const num of sorted) {
 		if (prev !== -1 && num > prev + 1) out.push("    ...");
 		prev = num;
-		const content = fileLines[num - 1];
-		const hash = computeLineHash(num, content);
+		const content = fileLines[num - 1]!;
+		const hash = computeLineHashAt(fileLines, num);
 		const prefix = `${String(num).padStart(lineNumberWidth, " ")}#${hash}`;
 		out.push(
 			retryLineSet.has(num)
@@ -505,9 +574,7 @@ function warnBareHashPrefixLines(
 	}
 	if (suspects.length === 0) return;
 
-	const fileHashSet = new Set(
-		fileLines.map((line, i) => computeLineHash(i + 1, line)),
-	);
+	const fileHashSet = new Set(computeLineHashes(fileLines));
 	const matchCount = suspects.filter(({ hash }) =>
 		fileHashSet.has(hash),
 	).length;
@@ -536,6 +603,7 @@ type ResolvedEditSpan = {
 
 type LineIndex = {
 	fileLines: string[];
+	visibleLines: string[];
 	lineStarts: number[];
 	hasTerminalNewline: boolean;
 };
@@ -555,6 +623,7 @@ function buildLineIndex(content: string): LineIndex {
 
 	return {
 		fileLines,
+		visibleLines: getVisibleLines(content),
 		lineStarts,
 		hasTerminalNewline: content.endsWith("\n"),
 	};
@@ -608,16 +677,8 @@ function computeInsertionBoundary(
 ): number {
 	switch (edit.op) {
 		case "append": {
-			const fileLineCount = lineIndex.fileLines.length;
-			const eofBoundary =
-				lineIndex.hasTerminalNewline && fileLineCount > 0
-					? fileLineCount - 1
-					: fileLineCount;
-			return edit.pos
-				? lineIndex.hasTerminalNewline && edit.pos.line === fileLineCount
-					? eofBoundary
-					: edit.pos.line
-				: eofBoundary;
+			const eofBoundary = lineIndex.visibleLines.length;
+			return edit.pos ? edit.pos.line : eofBoundary;
 		}
 		case "prepend":
 			return edit.pos ? edit.pos.line - 1 : 0;
@@ -769,23 +830,15 @@ function resolveEditToSpan(
 				};
 			}
 
-			const isSentinelAppend =
-				hasTerminalNewline && edit.pos.line === fileLines.length;
+			const start =
+				lineStarts[edit.pos.line - 1]! + fileLines[edit.pos.line - 1]!.length;
 			return {
 				kind: "insert",
 				index,
 				label: describeEdit(edit),
-				start: isSentinelAppend
-					? content.length
-					: lineStarts[edit.pos.line - 1]! +
-						fileLines[edit.pos.line - 1]!.length,
-				end: isSentinelAppend
-					? content.length
-					: lineStarts[edit.pos.line - 1]! +
-						fileLines[edit.pos.line - 1]!.length,
-				replacement: isSentinelAppend
-					? `${insertedText}\n`
-					: `\n${insertedText}`,
+				start,
+				end: start,
+				replacement: `\n${insertedText}`,
 				boundary: computeInsertionBoundary(edit, lineIndex),
 			};
 		}
@@ -891,18 +944,25 @@ function validateAnchorEdits(
 	const acceptedFuzzyRefs = new Set<string>();
 
 	function validate(ref: Anchor): boolean {
-		if (ref.line < 1 || ref.line > lineIndex.fileLines.length) {
+		if (ref.line < 1 || ref.line > lineIndex.visibleLines.length) {
 			throw new Error(
-				`[E_RANGE_OOB] Line ${ref.line} does not exist (file has ${lineIndex.fileLines.length} lines)`,
+				`[E_RANGE_OOB] Line ${ref.line} does not exist (file has ${lineIndex.visibleLines.length} lines)`,
 			);
 		}
-		const line = lineIndex.fileLines[ref.line - 1]!;
-		const actual = computeLineHash(ref.line, line);
+		const line = lineIndex.visibleLines[ref.line - 1]!;
+		const actual = computeLineHashAt(lineIndex.visibleLines, ref.line);
 		if (actual === ref.hash) return true;
+		// Backward-compatible escape hatch for programmatic callers using the
+		// exported low-level helper with explicit no-context sentinels. Normal read
+		// output never emits these hashes, so model-facing anchors stay contextual.
+		if (computeLineHash(ref.line, line) === ref.hash) return true;
 		if (ref.textHint !== undefined) {
-			const hintedHash = computeLineHash(ref.line, ref.textHint);
+			const hintedLines = [...lineIndex.visibleLines];
+			hintedLines[ref.line - 1] = ref.textHint;
+			const hintedHash = computeLineHashAt(hintedLines, ref.line);
+			const legacyHintedHash = computeLineHash(ref.line, ref.textHint);
 			if (
-				hintedHash === ref.hash &&
+				(hintedHash === ref.hash || legacyHintedHash === ref.hash) &&
 				isFuzzyEquivalentLine(ref.textHint, line)
 			) {
 				const key = `${ref.line}:${ref.hash}:${ref.textHint}`;
@@ -1117,11 +1177,11 @@ export function applyHashlineEdits(
 	);
 	if (mismatches.length) {
 		throw new Error(
-			formatMismatchError(mismatches, lineIndex.fileLines, retryLines),
+			formatMismatchError(mismatches, lineIndex.visibleLines, retryLines),
 		);
 	}
 
-	warnBareHashPrefixLines(workingEdits, lineIndex.fileLines, warnings);
+	warnBareHashPrefixLines(workingEdits, lineIndex.visibleLines, warnings);
 	maybeWarnSuspiciousUnicodeEscapePlaceholder(workingEdits, warnings);
 
 	// Phase 2: resolve edits to ordered spans
@@ -1195,24 +1255,24 @@ export function computeAffectedLineRange(params: {
 	return { start, end };
 }
 
-export function formatHashlineRegion(
-	lines: string[],
+export function formatHashlineRegionFromFile(
+	allLines: readonly string[],
 	startLine: number,
+	endLine: number,
 ): string {
-	const lineNumberWidth = String(
-		startLine + Math.max(0, lines.length - 1),
-	).length;
-	return lines
-		.map((line, index) => {
-			const lineNumber = startLine + index;
-			const paddedLineNumber = String(lineNumber).padStart(
-				lineNumberWidth,
-				" ",
-			);
-			return `${paddedLineNumber}#${computeLineHash(lineNumber, line)}:${line}`;
-		})
-		.join("\n");
+	if (endLine < startLine) return "";
+	const lineNumberWidth = String(endLine).length;
+	const out: string[] = [];
+	for (let lineNumber = startLine; lineNumber <= endLine; lineNumber++) {
+		const line = allLines[lineNumber - 1]!;
+		const paddedLineNumber = String(lineNumber).padStart(lineNumberWidth, " ");
+		out.push(
+			`${paddedLineNumber}#${computeLineHashAt(allLines, lineNumber)}:${line}`,
+		);
+	}
+	return out.join("\n");
 }
+
 
 // ─── Changed line range computation ─────────────────────────────────
 

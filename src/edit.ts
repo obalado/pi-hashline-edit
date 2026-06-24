@@ -17,8 +17,11 @@ import {
 } from "./edit-diff";
 import { normalizeEditRequest } from "./edit-normalize";
 import { resolveMutationTargetPath, writeFileAtomically } from "./fs-write";
+import { threeWayMerge } from "./merge";
+import { getReadSnapshot, rememberReadSnapshot } from "./read-snapshot";
 import {
 	applyHashlineEdits,
+	computeChangedLineRange,
 	resolveEditAnchors,
 	type HashlineToolEdit,
 } from "./hashline";
@@ -246,7 +249,55 @@ async function executeEditPipeline(
 	const originalNormalized = normalizeToLF(rawContent);
 
 	const resolved = resolveEditAnchors(toolEdits);
-	const anchorResult = applyHashlineEdits(originalNormalized, resolved, signal);
+	let anchorResult: ReturnType<typeof applyHashlineEdits>;
+	try {
+		anchorResult = applyHashlineEdits(originalNormalized, resolved, signal);
+	} catch (error: unknown) {
+		if (!(error instanceof Error) || !error.message.startsWith("[E_STALE_ANCHOR]")) {
+			throw error;
+		}
+
+		const canonicalPath = resolvedPath ?? (await resolveMutationTargetPath(absolutePath));
+		const snapshot = getReadSnapshot(canonicalPath);
+		if (!snapshot) {
+			throw error;
+		}
+
+		let snapshotResult: ReturnType<typeof applyHashlineEdits>;
+		try {
+			snapshotResult = applyHashlineEdits(
+				snapshot.normalizedContent,
+				resolved,
+				signal,
+			);
+		} catch {
+			throw error;
+		}
+
+		const mergeResult = threeWayMerge(
+			snapshot.normalizedContent,
+			snapshotResult.content,
+			originalNormalized,
+		);
+		if (!mergeResult.ok) {
+			throw error;
+		}
+
+		const changedRange = computeChangedLineRange(
+			originalNormalized,
+			mergeResult.content,
+		);
+		anchorResult = {
+			content: mergeResult.content,
+			firstChangedLine: changedRange?.firstChangedLine,
+			lastChangedLine: changedRange?.lastChangedLine,
+			warnings: [
+				...(snapshotResult.warnings ?? []),
+				"[W_MERGED_STALE_ANCHORS] Anchors were stale, but the edit was merged with non-overlapping current file changes. Re-read before further distant edits.",
+			],
+			...(snapshotResult.noopEdits ? { noopEdits: snapshotResult.noopEdits } : {}),
+		};
+	}
 
 	return {
 		path,
@@ -469,6 +520,11 @@ const editToolDefinition: EditToolDefinition = {
 				const noopSnapshotId = (
 					await getFileSnapshot(mutationTargetPath, { alreadyResolved: true })
 				).snapshotId;
+				rememberReadSnapshot({
+					canonicalPath: mutationTargetPath,
+					normalizedContent: result,
+					snapshotId: noopSnapshotId,
+				});
 				return buildNoopResponse({
 					path,
 					noopEdits,
@@ -496,6 +552,11 @@ const editToolDefinition: EditToolDefinition = {
 			const updatedSnapshotId = (
 				await getFileSnapshot(mutationTargetPath, { alreadyResolved: true })
 			).snapshotId;
+			rememberReadSnapshot({
+				canonicalPath: mutationTargetPath,
+				normalizedContent: result,
+				snapshotId: updatedSnapshotId,
+			});
 
 			const editMeta: EditMeta = {
 				editsAttempted,
