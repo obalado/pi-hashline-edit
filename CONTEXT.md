@@ -1,8 +1,8 @@
-# pi-hashline-edit Context
+# pi-hashline-context-edit Context
 
 ## Domain
 
-`pi-hashline-edit` is a Pi extension that replaces the built-in `read` and `edit` tools with hashline-anchored text editing.
+`pi-hashline-context-edit` is a Pi extension fork of `pi-hashline-edit` that replaces the built-in `read` and `edit` tools with hashline-anchored text editing.
 
 ## Core terms
 

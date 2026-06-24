@@ -1,12 +1,12 @@
-![pi-hashline-edit](assets/banner.jpeg)
+![pi-hashline-context-edit](assets/banner.jpeg)
 
-# pi-hashline-edit
+# pi-hashline-context-edit
 
 A [pi-coding-agent](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent) extension that replaces the built-in `read` and `edit` tools with a hash-anchored line-editing workflow.
 
 ## Fork notice
 
-This project is a fork of `pi-hashline-edit`, itself inspired by [oh-my-pi](https://github.com/can1357/oh-my-pi). This fork keeps the strict hashline editing contract and adds v0.8 changes focused on safer stale-context detection, optional raw reads, and deterministic stale-anchor recovery.
+`pi-hashline-context-edit` is a fork of `pi-hashline-edit`, itself inspired by [oh-my-pi](https://github.com/can1357/oh-my-pi). This fork keeps the strict hashline editing contract and adds v0.8 changes focused on safer stale-context detection, optional raw reads, and deterministic stale-anchor recovery.
 
 Notable fork changes:
 
@@ -22,11 +22,11 @@ Every line returned by normal `read` carries a short contextual hash. Edits refe
 ## Installation
 
 ```bash
-# From npm
-pi install npm:pi-hashline-edit
+# From GitHub
+pi install git:github.com/obalado/pi-hashline-context-edit
 
 # From a local checkout
-pi install /path/to/pi-hashline-edit
+pi install /path/to/pi-hashline-context-edit
 ```
 
 ## How It Works

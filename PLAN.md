@@ -1,10 +1,10 @@
-# Plan de mejoras — pi-hashline-edit v0.8.0
+# Plan de mejoras — pi-hashline-context-edit v0.8.0
 
 Estado: implementado en workspace (pendiente commit/release).
 
 Basado en análisis comparativo de:
 - can1357/oh-my-pi (`@oh-my-pi/hashline` v16.1.16 — original)
-- RimuruW/pi-hashline-edit (v0.7.0 — este repo)
+- RimuruW/pi-hashline-edit (v0.7.0 — upstream/fork base)
 - JerryAZR/pi-hashline-edit (v0.11.4 — fork)
 
 ---
