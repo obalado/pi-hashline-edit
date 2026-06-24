@@ -28,8 +28,8 @@
     ]
   },
   "dependencies": {
-    "diff": "^8.0.2",
-    "file-type": "^21.3.4"
+    "diff": "^9.0.0",
+    "file-type": "^22.0.1"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": ">=0.74.0",
